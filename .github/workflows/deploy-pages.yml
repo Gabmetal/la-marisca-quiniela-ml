@@ -37,8 +37,8 @@ jobs:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           pip install -r requirements.txt
-          python -c "from src.gpu_engine import RaffleGPUPredictor; p = RaffleGPUPredictor(); p.sync_latest_draws(days_back=7)"
-          python src/export_static_state.py
+          python -c "from src.gpu_engine import RaffleGPUPredictor; p = RaffleGPUPredictor(); p.sync_latest_draws(days_back=7)" || true
+          python src/export_static_state.py || true
           cp -f outputs/charts/*.png docs/charts/ || true
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

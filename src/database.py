@@ -273,11 +273,14 @@ class QuinielaDatabase:
                 need_c = (ds, 'ciudad') not in existing
                 need_f = (ds, 'formosa') not in existing
                 if need_c or need_f:
-                    _, c_num, f_num, res = scrape_draws.process_single_date(curr)
-                    for item in res:
-                        if (item['date'], item['lottery']) not in existing:
-                            self.upsert_draw(item['date'], item['lottery'], item['number_4d'], source='auto_scraper')
-                            added += 1
+                    try:
+                        _, c_num, f_num, res = scrape_draws.process_single_date(curr)
+                        for item in res:
+                            if (item['date'], item['lottery']) not in existing:
+                                self.upsert_draw(item['date'], item['lottery'], item['number_4d'], source='auto_scraper')
+                                added += 1
+                    except Exception as e:
+                        print(f"[WARN] Scraping failed for {curr}: {e}")
             curr += datetime.timedelta(days=1)
 
         return added
