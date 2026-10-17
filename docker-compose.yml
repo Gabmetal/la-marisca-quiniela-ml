@@ -1,0 +1,23 @@
+services:
+  la-marisca-gpu-predictor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: la-marisca-gpu-predictor
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - ./src:/app/src
+    environment:
+      - TZ=America/Argentina/Buenos_Aires
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

@@ -1,0 +1,59 @@
+name: Deploy Serverless App & Nightly Draw Sync
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+  schedule:
+    # Runs every night at 01:15 UTC (22:15 ART, right after the 21:00 ART Nocturno draw)
+    - cron: '15 1 * * 1-6'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync latest draws on scheduled/manual trigger
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Update SQLite & Serverless State JSON (Scheduled/Manual)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          pip install -r requirements.txt
+          python -c "from src.gpu_engine import RaffleGPUPredictor; p = RaffleGPUPredictor(); p.sync_latest_draws(days_back=7)"
+          python src/export_static_state.py
+          cp -f outputs/charts/*.png docs/charts/ || true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ docs/data/state.json || true
+          git diff --staged --quiet || git commit -m "chore(data): auto-sync latest Nocturno draws and ML state"
+          git push || true
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Static Serverless Artifact (docs/)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './docs'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
