@@ -256,8 +256,16 @@ class QuinielaDatabase:
         Scrapes recent dates from web portals (loteriasmundiales & ruta1000)
         and inserts any missing draws into SQLite.
         """
-        today = datetime.date.today()
-        start_d = today - datetime.timedelta(days=days_back)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        now_art = now_utc - datetime.timedelta(hours=3)
+        # Sorteo Nocturno occurs at 21:00 ART. Results publish around 21:15-21:30 ART.
+        # If current ART time is before 21:30, today's Nocturno has not been drawn yet!
+        if now_art.hour < 21 or (now_art.hour == 21 and now_art.minute < 30):
+            max_d = now_art.date() - datetime.timedelta(days=1)
+        else:
+            max_d = now_art.date()
+
+        start_d = max_d - datetime.timedelta(days=days_back)
 
         with self._get_conn() as conn:
             existing = set(
@@ -267,7 +275,7 @@ class QuinielaDatabase:
 
         added = 0
         curr = start_d
-        while curr <= today:
+        while curr <= max_d:
             if curr.weekday() != 6:
                 ds = curr.strftime('%Y-%m-%d')
                 need_c = (ds, 'ciudad') not in existing

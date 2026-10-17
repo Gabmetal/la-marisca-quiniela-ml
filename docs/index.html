@@ -540,7 +540,7 @@
     }
 
     // Core 5-Pillar + 1M Monte Carlo + Rook Optimizer in Browser
-    async function runClientPrediction() {
+    async function runClientPrediction(forceLiveSim = false) {
       if (!appState) return;
       const t0 = performance.now();
 
@@ -556,6 +556,25 @@
         bayesian_hot: parseFloat(document.getElementById('w-hot').value) || 0,
         renewal_cold: parseFloat(document.getElementById('w-cold').value) || 0
       };
+
+      const isDefault =
+        !forceLiveSim &&
+        takenNumbers.size === 0 &&
+        customDraws.filter(d => d.lottery === lottery).length === 0 &&
+        targetDate === '2026-10-17' &&
+        ticketCount === 5 &&
+        orthogonal &&
+        wRaw.ml_tree === 30 &&
+        wRaw.deep_gpu === 25 &&
+        wRaw.markov === 15 &&
+        wRaw.bayesian_hot === 15 &&
+        wRaw.renewal_cold === 15;
+
+      if (isDefault && appState.lotteries && appState.lotteries[lottery] && appState.lotteries[lottery].initial_prediction) {
+        renderDashboard(appState.lotteries[lottery].initial_prediction);
+        return;
+      }
+
       const wSum = (wRaw.ml_tree + wRaw.deep_gpu + wRaw.markov + wRaw.bayesian_hot + wRaw.renewal_cold) || 1.0;
       const W = {
         ml_tree: wRaw.ml_tree / wSum,
@@ -1005,6 +1024,8 @@
         const res = await fetch(`data/state.json?t=${Date.now()}`);
         if (res.ok) {
           appState = await res.json();
+          customDraws = [];
+          localStorage.removeItem(STORAGE_CUSTOM_DRAWS);
         }
         const lottery = document.getElementById('lottery-select').value;
         const targetDate = document.getElementById('target-date').value;
@@ -1018,9 +1039,12 @@
     }
 
     window.addEventListener('DOMContentLoaded', async () => {
+      // Discard any stale draws with date > 2026-10-16 from previous experimental runs
+      customDraws = customDraws.filter(d => d.date <= '2026-10-16');
+      localStorage.setItem(STORAGE_CUSTOM_DRAWS, JSON.stringify(customDraws));
       await detectClientHardware();
       try {
-        const res = await fetch('data/state.json');
+        const res = await fetch(`data/state.json?t=${Date.now()}`);
         appState = await res.json();
         await runClientPrediction();
       } catch (e) {
