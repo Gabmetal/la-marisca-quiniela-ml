@@ -72,7 +72,7 @@
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Fecha a Predecir</label>
-              <input type="date" id="target-date" value="2026-10-17" onchange="onLotteryOrDateChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+              <input type="date" id="target-date" value="2026-10-19" onchange="onLotteryOrDateChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
             </div>
           </div>
 
@@ -249,7 +249,7 @@
         <div class="flex flex-wrap items-end gap-2 bg-slate-900/90 p-3 rounded-xl border border-slate-800">
           <div>
             <label class="block text-[11px] text-slate-400 mb-1">Fecha del Sorteo</label>
-            <input type="date" id="manual-date" value="2026-10-16" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+            <input type="date" id="manual-date" value="2026-10-17" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white" />
           </div>
           <div>
             <label class="block text-[11px] text-slate-400 mb-1">Lotería</label>
@@ -557,11 +557,15 @@
         renewal_cold: parseFloat(document.getElementById('w-cold').value) || 0
       };
 
+      const defaultTargetDate = (appState.lotteries && appState.lotteries[lottery] && appState.lotteries[lottery].initial_prediction)
+        ? appState.lotteries[lottery].initial_prediction.target_date
+        : targetDate;
+
       const isDefault =
         !forceLiveSim &&
         takenNumbers.size === 0 &&
         customDraws.filter(d => d.lottery === lottery).length === 0 &&
-        targetDate === '2026-10-17' &&
+        targetDate === defaultTargetDate &&
         ticketCount === 5 &&
         orthogonal &&
         wRaw.ml_tree === 30 &&
@@ -1028,6 +1032,11 @@
           localStorage.removeItem(STORAGE_CUSTOM_DRAWS);
         }
         const lottery = document.getElementById('lottery-select').value;
+        if (appState && appState.lotteries && appState.lotteries[lottery] && appState.lotteries[lottery].initial_prediction) {
+          const initPred = appState.lotteries[lottery].initial_prediction;
+          document.getElementById('target-date').value = initPred.target_date;
+          document.getElementById('manual-date').value = initPred.last_draw.date;
+        }
         const targetDate = document.getElementById('target-date').value;
         await fetchLiveWeather(lottery, targetDate);
         btn.textContent = '✓ Sincronizado con GitHub & Open-Meteo';
@@ -1039,13 +1048,16 @@
     }
 
     window.addEventListener('DOMContentLoaded', async () => {
-      // Discard any stale draws with date > 2026-10-16 from previous experimental runs
-      customDraws = customDraws.filter(d => d.date <= '2026-10-16');
-      localStorage.setItem(STORAGE_CUSTOM_DRAWS, JSON.stringify(customDraws));
       await detectClientHardware();
       try {
         const res = await fetch(`data/state.json?t=${Date.now()}`);
         appState = await res.json();
+        const lottery = document.getElementById('lottery-select').value;
+        if (appState && appState.lotteries && appState.lotteries[lottery] && appState.lotteries[lottery].initial_prediction) {
+          const initPred = appState.lotteries[lottery].initial_prediction;
+          document.getElementById('target-date').value = initPred.target_date;
+          document.getElementById('manual-date').value = initPred.last_draw.date;
+        }
         await runClientPrediction();
       } catch (e) {
         console.error('Failed to load state.json:', e);

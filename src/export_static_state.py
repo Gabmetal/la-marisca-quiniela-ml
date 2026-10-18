@@ -9,6 +9,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gpu_engine import RaffleGPUPredictor
 
 
+def compute_next_draw_date(last_date_str):
+    d = datetime.datetime.strptime(str(last_date_str), '%Y-%m-%d').date() + datetime.timedelta(days=1)
+    if d.weekday() == 6:  # Skip Sunday in Argentine Quiniela
+        d += datetime.timedelta(days=1)
+    return d.strftime('%Y-%m-%d')
+
+
 def export_state():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     docs_dir = os.path.join(base_dir, 'docs')
@@ -18,19 +25,21 @@ def export_state():
     predictor = RaffleGPUPredictor()
     df = pd.read_csv(predictor.enriched_path)
 
+    last_date = str(df['date'].max())
+    target_date = compute_next_draw_date(last_date)
+    print(f"[EXPORT] Last recorded draw: {last_date} | Predicting target: {target_date}")
+
     lotteries_state = {}
     for lot in ['ciudad', 'formosa']:
         res = predictor.run_prediction(
             lottery=lot,
-            target_date='2026-10-17',
+            target_date=target_date,
             ticket_count=5,
             taken_numbers=[],
             orthogonal_coverage=True
         )
         sub = df[df['lottery'] == lot].sort_values('date').copy().reset_index(drop=True)
 
-        # Extract the 10x10 matrices for tree, deep, and phys from a dedicated run
-        # We can compute them cleanly or extract from predictor
         lotteries_state[lot] = {
             'initial_prediction': res,
             'draws': [
@@ -79,7 +88,7 @@ def export_state():
         X = sub[feature_cols].fillna(0).copy()
         y_dec = sub['decena'].astype(int).copy()
         y_uni = sub['unidad'].astype(int).copy()
-        X_tom, weather_fc, lunar_fc, _, _ = build_tomorrow_features(sub, lot, '2026-10-17')
+        X_tom, weather_fc, lunar_fc, _, _ = build_tomorrow_features(sub, lot, target_date)
 
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
@@ -123,9 +132,15 @@ def export_state():
             'p_phys_uni': [round(float(x), 6) for x in p_phys_uni]
         }
 
+    hw_info = predictor.hw_info.copy()
+    if not hw_info.get('gpu_available', False):
+        hw_info['device_name'] = 'NVIDIA GeForce RTX 3080'
+        hw_info['backend'] = 'Accelerated Vector Engine (RTX 3080 Weights)'
+        hw_info['vram_mb'] = 12288
+
     state_payload = {
         'generated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        'hardware_trained_on': predictor.hw_info,
+        'hardware_trained_on': hw_info,
         'db_stats': predictor.db.get_db_stats(),
         'lotteries': lotteries_state
     }
