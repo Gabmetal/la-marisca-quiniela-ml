@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import sqlite3
 import datetime
 import json
@@ -227,9 +228,9 @@ class QuinielaDatabase:
         df_raw['number_4d'] = df_raw['number_4d'].apply(lambda x: f"{int(x):04d}")
         df_raw.to_csv(self.raw_csv_path, index=False)
 
-        # Compute autoregressive features per lottery while preserving SQLite weather/lunar columns
+        # Compute autoregressive features for Ciudad while preserving SQLite weather/lunar columns
         enriched_parts = []
-        for lot in ['ciudad', 'formosa']:
+        for lot in ['ciudad']:
             sub = df_db[df_db['lottery'] == lot].copy()
             if sub.empty:
                 continue
@@ -253,7 +254,7 @@ class QuinielaDatabase:
 
     def sync_from_web(self, days_back=14):
         """
-        Scrapes recent dates from web portals (loteriasmundiales & ruta1000)
+        Scrapes recent dates from web portals (loteriasmundiales & ruta1000) for Quiniela de la Ciudad
         and inserts any missing draws into SQLite.
         """
         now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -269,8 +270,8 @@ class QuinielaDatabase:
 
         with self._get_conn() as conn:
             existing = set(
-                (r['date'], r['lottery'])
-                for r in conn.execute("SELECT date, lottery FROM draws WHERE date >= ?", (start_d.strftime('%Y-%m-%d'),)).fetchall()
+                r['date']
+                for r in conn.execute("SELECT date FROM draws WHERE lottery = 'ciudad' AND date >= ?", (start_d.strftime('%Y-%m-%d'),)).fetchall()
             )
 
         added = 0
@@ -278,15 +279,12 @@ class QuinielaDatabase:
         while curr <= max_d:
             if curr.weekday() != 6:
                 ds = curr.strftime('%Y-%m-%d')
-                need_c = (ds, 'ciudad') not in existing
-                need_f = (ds, 'formosa') not in existing
-                if need_c or need_f:
+                if ds not in existing:
                     try:
-                        _, c_num, f_num, res = scrape_draws.process_single_date(curr)
-                        for item in res:
-                            if (item['date'], item['lottery']) not in existing:
-                                self.upsert_draw(item['date'], item['lottery'], item['number_4d'], source='auto_scraper')
-                                added += 1
+                        c_num = scrape_draws.scrape_ciudad(curr)
+                        if c_num and re.match(r'^\d{4}$', str(c_num)):
+                            self.upsert_draw(ds, 'ciudad', c_num, source='auto_scraper')
+                            added += 1
                     except Exception as e:
                         print(f"[WARN] Scraping failed for {curr}: {e}")
             curr += datetime.timedelta(days=1)

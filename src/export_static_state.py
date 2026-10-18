@@ -30,7 +30,7 @@ def export_state():
     print(f"[EXPORT] Last recorded draw: {last_date} | Predicting target: {target_date}")
 
     lotteries_state = {}
-    for lot in ['ciudad', 'formosa']:
+    for lot in ['ciudad']:
         res = predictor.run_prediction(
             lottery=lot,
             target_date=target_date,
@@ -63,8 +63,8 @@ def export_state():
             ]
         }
 
-    # Also store per-cell (00..99) tree_prob, deep_prob, phys_prob for both lotteries
-    for lot in ['ciudad', 'formosa']:
+    # Also store per-cell (00..99) tree_prob, deep_prob, phys_prob for Ciudad
+    for lot in ['ciudad']:
         sub = df[df['lottery'] == lot].sort_values('date').copy().reset_index(drop=True)
         from train_and_predict import build_tomorrow_features
         from gpu_engine import train_deep_bolillero

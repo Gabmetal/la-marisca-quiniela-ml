@@ -22,7 +22,7 @@
       <div>
         <div class="flex flex-wrap items-center gap-2">
           <span class="px-2.5 py-1 text-xs font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30">
-            La Marisca Project • 2 - LOTBA Primary
+            La Marisca • 2 - LOTBA Ciudad (1 Año Completo • 305 Sorteos)
           </span>
           <span id="hw-badge" class="px-2.5 py-1 text-xs font-mono bg-indigo-500/20 text-indigo-300 rounded-full border border-indigo-500/30">
             Detectando WebGPU / RTX Pre-Trained...
@@ -65,10 +65,11 @@
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs text-slate-400 mb-1">Lotería Oficial</label>
-              <select id="lottery-select" onchange="onLotteryOrDateChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-semibold">
-                <option value="ciudad" selected>2 - LOTBA (Ciudad Bs.As.)</option>
-                <option value="formosa">Quiniela de Formosa</option>
-              </select>
+              <div class="w-full bg-slate-900 border border-emerald-500/40 rounded-lg px-3 py-2 text-sm text-emerald-300 font-bold flex items-center justify-between">
+                <span>2 - LOTBA (Ciudad Bs.As.)</span>
+                <span class="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-mono">100% EXCLUSIVO</span>
+              </div>
+              <input type="hidden" id="lottery-select" value="ciudad" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Fecha a Predecir</label>
@@ -239,9 +240,9 @@
     <div class="glass rounded-2xl p-5 space-y-4">
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
-          <h2 class="text-lg font-bold text-white">🗄️ Base de Datos Persistente (Seed RTX + Browser Storage) — Ingesta Continua</h2>
+          <h2 class="text-lg font-bold text-white">🗄️ Base de Datos Oficial LOTBA (1 Año Completo • 305 Sorteos)</h2>
           <p class="text-xs text-slate-400 mt-0.5">
-            Cuando sale un nuevo sorteo en <strong>2 - LOTBA (Ciudad)</strong> o <strong>Formosa</strong>, cárgala aquí o presiona Auto-Sincronizar. El navegador consulta el clima en vivo de <strong>Open-Meteo</strong>, calcula la efeméride lunar, actualiza la matriz de Markov y los atrasos, y recalcula las probabilidades sin necesitar ningún servidor backend.
+            Registro exhaustivo de 305 sorteos oficiales nocturnos (21:00 ART) de la <strong>Quiniela de la Ciudad (LOTBA)</strong> cubriendo un año completo. Al cargar un nuevo sorteo o presionar Auto-Sincronizar, el navegador consulta el clima en vivo de Buenos Aires vía <strong>Open-Meteo</strong>, calcula la efeméride lunar, actualiza la matriz estocástica de Markov y recalcula las probabilidades en el acto.
           </p>
         </div>
 
@@ -253,10 +254,10 @@
           </div>
           <div>
             <label class="block text-[11px] text-slate-400 mb-1">Lotería</label>
-            <select id="manual-lottery" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
-              <option value="ciudad" selected>2 - LOTBA (Ciudad)</option>
-              <option value="formosa">Formosa</option>
-            </select>
+            <div class="bg-slate-950 border border-emerald-500/30 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-bold">
+              2 - LOTBA (Ciudad)
+            </div>
+            <input type="hidden" id="manual-lottery" value="ciudad" />
           </div>
           <div>
             <label class="block text-[11px] text-slate-400 mb-1">1° Premio (4 cifras)</label>
@@ -317,8 +318,7 @@
     let webGpuName = null;
 
     const COORDS = {
-      ciudad: { lat: -34.6037, lon: -58.3816, name: 'Buenos Aires (LOTBA)' },
-      formosa: { lat: -26.1849, lon: -58.1731, name: 'Formosa Capital' }
+      ciudad: { lat: -34.6037, lon: -58.3816, name: 'Buenos Aires (LOTBA)' }
     };
 
     // Detect WebGPU in browser
@@ -398,9 +398,7 @@
         } catch (e) {}
       }
 
-      const fallback = lottery === 'ciudad'
-        ? { temperature_2m: 18.6, relative_humidity_2m: 66.0, surface_pressure: 1015.2, wind_speed_10m: 14.5 }
-        : { temperature_2m: 25.4, relative_humidity_2m: 58.0, surface_pressure: 1011.8, wind_speed_10m: 11.2 };
+      const fallback = { temperature_2m: 18.6, relative_humidity_2m: 66.0, surface_pressure: 1015.2, wind_speed_10m: 14.5 };
       liveWeatherCache[key] = fallback;
       return fallback;
     }
@@ -831,7 +829,6 @@
       const anyDigitReach = (1.0 - (1.0 - coveredDec.size / 10.0) * (1.0 - coveredUni.size / 10.0)) * 100.0;
 
       const ciudadCount = getDrawsForLottery('ciudad').length;
-      const formosaCount = getDrawsForLottery('formosa').length;
       const elapsedMs = (performance.now() - t0).toFixed(1);
       document.getElementById('sim-speed').textContent = `1M MC en ${elapsedMs} ms`;
 
@@ -842,8 +839,7 @@
         total_draws_analyzed: draws.length,
         db_stats: {
           ciudad_draws: ciudadCount,
-          formosa_draws: formosaCount,
-          total_draws: ciudadCount + formosaCount
+          total_draws: ciudadCount
         },
         recent_draws: draws.slice(-12).reverse(),
         last_draw: {
@@ -876,8 +872,8 @@
 
       const dbs = data.db_stats;
       document.getElementById('db-badge').textContent =
-        `DB Activa: ${dbs.ciudad_draws} LOTBA + ${dbs.formosa_draws} Formosa (${dbs.total_draws} total)`;
-      document.getElementById('kpi-db-count').textContent = `${dbs.total_draws}`;
+        `DB Activa: ${dbs.ciudad_draws || dbs.total_draws} Sorteos LOTBA (1 Año Completo)`;
+      document.getElementById('kpi-db-count').textContent = `${dbs.ciudad_draws || dbs.total_draws}`;
 
       document.getElementById('last-draw-banner').textContent =
         `${data.last_draw.date} → 1° ${data.last_draw.number_4d} (Ambo: ${data.last_draw.number_2d})`;
@@ -967,7 +963,7 @@
       document.getElementById('db-draws-tbody').innerHTML = data.recent_draws.map(r => `
         <tr class="hover:bg-slate-900/40">
           <td class="py-2 text-white font-semibold">${r.date}</td>
-          <td class="py-2 uppercase text-slate-300">${r.lottery === 'ciudad' ? '2 - LOTBA (Ciudad)' : 'Formosa'}</td>
+          <td class="py-2 uppercase text-slate-300">2 - LOTBA (Ciudad)</td>
           <td class="py-2 text-slate-300">${r.number_4d}</td>
           <td class="py-2"><span class="px-2 py-0.5 bg-amber-500/20 text-amber-300 font-bold rounded border border-amber-500/30">${String(r.number_2d).padStart(2, '0')}</span></td>
           <td class="py-2 text-slate-400">D=${r.decena} | U=${r.unidad}</td>

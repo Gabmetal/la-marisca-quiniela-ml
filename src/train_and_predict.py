@@ -13,7 +13,7 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score
 from sklearn.inspection import permutation_importance
 from sklearn.preprocessing import StandardScaler
-
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import enrich_features
 
 # Set style

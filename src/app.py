@@ -36,7 +36,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div>
         <div class="flex flex-wrap items-center gap-2">
           <span class="px-2.5 py-1 text-xs font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30">
-            La Marisca Project • 2 - LOTBA Primary
+            La Marisca • 2 - LOTBA Ciudad (1 Año Completo • 305 Sorteos)
           </span>
           <span id="hw-badge" class="px-2.5 py-1 text-xs font-mono bg-indigo-500/20 text-indigo-300 rounded-full border border-indigo-500/30">
             Detectando GPU...
@@ -49,7 +49,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           Optimizador Cuántico-Estocástico de Rifa (00–99)
         </h1>
         <p class="text-sm text-slate-400 mt-1">
-          Motor Auto-Actualizable con Base de Datos SQLite + Ensamble GPU de 5 Pilares (LOTBA Ciudad & Formosa)
+          Motor Auto-Actualizable con Base de Datos SQLite + Ensamble GPU de 5 Pilares (LOTBA Ciudad 305 Sorteos)
         </p>
       </div>
       <div class="flex flex-col items-end gap-2 self-stretch md:self-auto justify-between">
@@ -76,10 +76,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs text-slate-400 mb-1">Lotería Oficial</label>
-              <select id="lottery-select" onchange="runPrediction()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-semibold">
-                <option value="ciudad" selected>2 - LOTBA (Ciudad Bs.As.)</option>
-                <option value="formosa">Quiniela de Formosa</option>
-              </select>
+              <div class="w-full bg-slate-900 border border-emerald-500/40 rounded-lg px-3 py-2 text-sm text-emerald-300 font-bold flex items-center justify-between">
+                <span>2 - LOTBA (Ciudad Bs.As.)</span>
+                <span class="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-mono">100% EXCLUSIVO</span>
+              </div>
+              <input type="hidden" id="lottery-select" value="ciudad" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Fecha a Predecir</label>
@@ -252,7 +253,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div>
           <h2 class="text-lg font-bold text-white">🗄️ Base de Datos SQLite (<code class="text-emerald-400">quiniela_marisca.db</code>) — Ingesta Continua y Actualización del Modelo</h2>
           <p class="text-xs text-slate-400 mt-0.5">
-            Cada vez que sale un nuevo sorteo en <strong>2 - LOTBA (Ciudad)</strong> o <strong>Formosa</strong>, puedes auto-sincronizarlo desde la web o cargarlo manualmente aquí. El sistema descarga el clima/luna de esa fecha, actualiza los atrasos y re-entrena el modelo en el acto.
+            Registro de 305 sorteos oficiales de <strong>2 - LOTBA (Ciudad de Buenos Aires)</strong> cubriendo 1 año completo. Puedes auto-sincronizar nuevos sorteos desde la web o cargarlos manualmente aquí. El sistema descarga el clima/luna de esa fecha, actualiza los atrasos y re-entrena el modelo en el acto.
           </p>
         </div>
 
@@ -260,14 +261,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="flex flex-wrap items-end gap-2 bg-slate-900/90 p-3 rounded-xl border border-slate-800">
           <div>
             <label class="block text-[11px] text-slate-400 mb-1">Fecha del Sorteo</label>
-            <input type="date" id="manual-date" value="2026-10-16" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+            <input type="date" id="manual-date" value="2026-10-17" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white" />
           </div>
           <div>
             <label class="block text-[11px] text-slate-400 mb-1">Lotería</label>
-            <select id="manual-lottery" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
-              <option value="ciudad" selected>2 - LOTBA (Ciudad)</option>
-              <option value="formosa">Formosa</option>
-            </select>
+            <div class="bg-slate-950 border border-emerald-500/30 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-bold">
+              2 - LOTBA (Ciudad)
+            </div>
+            <input type="hidden" id="manual-lottery" value="ciudad" />
           </div>
           <div>
             <label class="block text-[11px] text-slate-400 mb-1">1° Premio (4 cifras)</label>
@@ -406,10 +407,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       // DB badge
       if (data.db_stats) {
-        const dbs = data.db_stats;
         document.getElementById('db-badge').textContent =
-          `SQLite: ${dbs.ciudad_draws} LOTBA + ${dbs.formosa_draws} Formosa (${dbs.total_draws} total)`;
-        document.getElementById('kpi-db-count').textContent = `${dbs.total_draws}`;
+          `SQLite: ${dbs.ciudad_draws || dbs.total_draws} Sorteos LOTBA (1 Año Completo)`;
+        document.getElementById('kpi-db-count').textContent = `${dbs.ciudad_draws || dbs.total_draws}`;
       }
 
       // Last draw
@@ -511,7 +511,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         document.getElementById('db-draws-tbody').innerHTML = data.recent_draws.map(r => `
           <tr class="hover:bg-slate-900/40">
             <td class="py-2 text-white font-semibold">${r.date}</td>
-            <td class="py-2 uppercase text-slate-300">${r.lottery === 'ciudad' ? '2 - LOTBA (Ciudad)' : 'Formosa'}</td>
+            <td class="py-2 uppercase text-slate-300">2 - LOTBA (Ciudad)</td>
             <td class="py-2 text-slate-300">${r.number_4d}</td>
             <td class="py-2"><span class="px-2 py-0.5 bg-amber-500/20 text-amber-300 font-bold rounded border border-amber-500/30">${String(r.number_2d).padStart(2, '0')}</span></td>
             <td class="py-2 text-slate-400">D=${r.decena} | U=${r.unidad}</td>
