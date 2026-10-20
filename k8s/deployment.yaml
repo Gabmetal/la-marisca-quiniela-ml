@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: la-marisca-app
+  namespace: la-marisca
+  labels:
+    app.kubernetes.io/name: la-marisca
+    app: la-marisca-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: la-marisca-app
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: la-marisca-app
+    spec:
+      containers:
+        - name: la-marisca
+          image: la-marisca:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: TZ
+              value: America/Argentina/Buenos_Aires
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: OPENBLAS_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          volumeMounts:
+            - name: data-volume
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+      volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: la-marisca-data

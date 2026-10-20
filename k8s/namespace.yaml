@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: la-marisca
+  labels:
+    app.kubernetes.io/name: la-marisca
+    app.kubernetes.io/part-of: quiniela-ml

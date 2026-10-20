@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: la-marisca-nightly-sync
+  namespace: la-marisca
+  labels:
+    app.kubernetes.io/name: la-marisca
+spec:
+  schedule: "15 0 * * *"  # 00:15 UTC = 21:15 ART (Buenos Aires time, right after 21:00 LOTBA Nocturna draw)
+  timeZone: "America/Argentina/Buenos_Aires"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: la-marisca-cron
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: sync-trigger
+              image: curlimages/curl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "[CRON] $(date) - Triggering LOTBA draw synchronization..."
+                  curl -sf -X POST http://la-marisca-service.la-marisca.svc.cluster.local:8000/api/sync \
+                    -H "Content-Type: application/json" \
+                    -d '{"days_back": 7}' || echo "[WARN] Sync request failed"
+
+                  echo "[CRON] $(date) - Triggering Walk-Forward Hyperparameter re-calibration..."
+                  curl -sf -X POST http://la-marisca-service.la-marisca.svc.cluster.local:8000/api/hyperopt \
+                    -H "Content-Type: application/json" \
+                    -d '{"lottery": "ciudad"}' || echo "[WARN] Hyperopt request failed"
+
+                  echo "[CRON] $(date) - Done."
+              resources:
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+                requests:
+                  cpu: 20m
+                  memory: 32Mi

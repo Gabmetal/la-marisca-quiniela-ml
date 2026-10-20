@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: la-marisca-ingress
+  namespace: la-marisca
+  labels:
+    app.kubernetes.io/name: la-marisca
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: lotba.gabo.lat
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: la-marisca-service
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - lotba.gabo.lat
+      secretName: lotba-tls

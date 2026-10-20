@@ -97,7 +97,7 @@ def fetch_weather_historical(lottery, start_date='2026-07-01', end_date='2026-10
             time.sleep(2)
     return {}
 
-def fetch_weather_forecast(lottery, target_date='2026-10-17'):
+def fetch_weather_forecast(lottery, target_date='2026-10-20'):
     coords = COORDINATES.get(lottery, COORDINATES['ciudad'])
     fallback_defaults = {
         'ciudad': {
@@ -120,12 +120,13 @@ def fetch_weather_forecast(lottery, target_date='2026-10-17'):
             f"https://api.open-meteo.com/v1/forecast?"
             f"latitude={coords['lat']}&longitude={coords['lon']}&"
             f"hourly=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m&"
+            f"forecast_days=16&"
             f"timezone={coords['tz'].replace('/', '%2F')}"
         ),
         (
             f"https://archive-api.open-meteo.com/v1/archive?"
             f"latitude={coords['lat']}&longitude={coords['lon']}&"
-            f"start_date=2026-10-10&end_date=2026-10-17&"
+            f"start_date={target_date}&end_date={target_date}&"
             f"hourly=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m&"
             f"timezone={coords['tz'].replace('/', '%2F')}"
         )
@@ -134,7 +135,7 @@ def fetch_weather_forecast(lottery, target_date='2026-10-17'):
     for url in urls:
         for attempt in range(2):
             try:
-                r = requests.get(url, timeout=12)
+                r = requests.get(url, timeout=10)
                 if r.status_code == 200:
                     data = r.json()
                     hourly = data.get('hourly', {})
@@ -161,9 +162,8 @@ def fetch_weather_forecast(lottery, target_date='2026-10-17'):
                             'wind_speed_10m': float(winds[-1])
                         }
             except Exception:
-                time.sleep(1)
+                time.sleep(0.5)
 
-    print(f"[WARN] Open-Meteo forecast timed out or failed for {lottery} on {target_date}. Using robust telemetry fallback: {fallback}")
     return fallback
 
 def compute_autoregressive_features(df_lottery):

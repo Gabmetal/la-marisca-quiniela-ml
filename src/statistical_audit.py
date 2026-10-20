@@ -57,7 +57,7 @@ def wald_wolfowitz_runs_test(binary_seq):
         'is_random': bool(p > 0.05)
     }
 
-def run_statistical_audit(df, lottery_name=None):
+def run_statistical_audit(df, lottery_name=None, verbose=False):
     """
     Executes Chi-Square, Runs test, Shannon entropy, and Hot/Cold ranking.
     """
@@ -69,9 +69,10 @@ def run_statistical_audit(df, lottery_name=None):
         prefix = "[COMBINED]"
         
     n_samples = len(sub)
-    print(f"\n=======================================================")
-    print(f" STATISTICAL AUDIT REPORT: {prefix} (N = {n_samples} draws)")
-    print(f"=======================================================")
+    if verbose:
+        print(f"\n=======================================================")
+        print(f" STATISTICAL AUDIT REPORT: {prefix} (N = {n_samples} draws)")
+        print(f"=======================================================")
     
     # 1. CHI-SQUARE TESTS
     # Decena (0-9)
@@ -86,19 +87,21 @@ def run_statistical_audit(df, lottery_name=None):
     obs_par = (sub['number_2d'] % 2).value_counts().reindex([0, 1], fill_value=0)
     chi_par, p_par = stats.chisquare(obs_par)
     
-    print("\n--- 1. CHI-SQUARE UNIFORMITY TESTS ---")
-    print(f"Decena (0-9):  chi2 = {chi_dec:6.3f}, df = 9, p-value = {p_dec:.4f} -> {'Uniform (p > 0.05)' if p_dec > 0.05 else 'Non-uniform anomaly (p <= 0.05)'}")
-    print(f"Unidad (0-9):  chi2 = {chi_uni:6.3f}, df = 9, p-value = {p_uni:.4f} -> {'Uniform (p > 0.05)' if p_uni > 0.05 else 'Non-uniform anomaly (p <= 0.05)'}")
-    print(f"Parity (Even/Odd): chi2 = {chi_par:6.3f}, df = 1, p-value = {p_par:.4f} -> {'Balanced (p > 0.05)' if p_par > 0.05 else 'Skewed (p <= 0.05)'}")
+    if verbose:
+        print("\n--- 1. CHI-SQUARE UNIFORMITY TESTS ---")
+        print(f"Decena (0-9):  chi2 = {chi_dec:6.3f}, df = 9, p-value = {p_dec:.4f} -> {'Uniform (p > 0.05)' if p_dec > 0.05 else 'Non-uniform anomaly (p <= 0.05)'}")
+        print(f"Unidad (0-9):  chi2 = {chi_uni:6.3f}, df = 9, p-value = {p_uni:.4f} -> {'Uniform (p > 0.05)' if p_uni > 0.05 else 'Non-uniform anomaly (p <= 0.05)'}")
+        print(f"Parity (Even/Odd): chi2 = {chi_par:6.3f}, df = 1, p-value = {p_par:.4f} -> {'Balanced (p > 0.05)' if p_par > 0.05 else 'Skewed (p <= 0.05)'}")
     
     # 2. WALD-WOLFOWITZ RUNS TEST (Temporal independence)
     runs_parity = wald_wolfowitz_runs_test((sub['number_2d'] % 2).values)
     median_val = sub['number_2d'].median()
     runs_median = wald_wolfowitz_runs_test((sub['number_2d'] >= median_val).astype(int).values)
     
-    print("\n--- 2. WALD-WOLFOWITZ RUNS TESTS (TEMPORAL INDEPENDENCE) ---")
-    print(f"Parity sequence:   Observed Runs = {runs_parity['runs']}, Expected = {runs_parity['expected_runs']}, Z = {runs_parity['z_stat']}, p-value = {runs_parity['p_value']} -> {'Independent / Random' if runs_parity['is_random'] else 'Clustering/Persistence'}")
-    print(f"Median sequence:   Observed Runs = {runs_median['runs']}, Expected = {runs_median['expected_runs']}, Z = {runs_median['z_stat']}, p-value = {runs_median['p_value']} -> {'Independent / Random' if runs_median['is_random'] else 'Clustering/Persistence'}")
+    if verbose:
+        print("\n--- 2. WALD-WOLFOWITZ RUNS TESTS (TEMPORAL INDEPENDENCE) ---")
+        print(f"Parity sequence:   Observed Runs = {runs_parity['runs']}, Expected = {runs_parity['expected_runs']}, Z = {runs_parity['z_stat']}, p-value = {runs_parity['p_value']} -> {'Independent / Random' if runs_parity['is_random'] else 'Clustering/Persistence'}")
+        print(f"Median sequence:   Observed Runs = {runs_median['runs']}, Expected = {runs_median['expected_runs']}, Z = {runs_median['z_stat']}, p-value = {runs_median['p_value']} -> {'Independent / Random' if runs_median['is_random'] else 'Clustering/Persistence'}")
     
     # 3. SHANNON ENTROPY
     ent_dec = compute_entropy(sub['decena'])
@@ -107,10 +110,11 @@ def run_statistical_audit(df, lottery_name=None):
     ent_num2d = compute_entropy(sub['number_2d'])
     max_ent_num2d = math.log2(100) # ~6.643856 bits
     
-    print("\n--- 3. SHANNON INFORMATION ENTROPY ---")
-    print(f"Decena Entropy:   {ent_dec:.4f} bits (Max theoretical: {max_ent_digit:.4f} bits, Efficiency: {ent_dec/max_ent_digit*100:.2f}%)")
-    print(f"Unidad Entropy:   {ent_uni:.4f} bits (Max theoretical: {max_ent_digit:.4f} bits, Efficiency: {ent_uni/max_ent_digit*100:.2f}%)")
-    print(f"Number 2D Entropy:{ent_num2d:.4f} bits (Max theoretical: {max_ent_num2d:.4f} bits, Efficiency: {ent_num2d/max_ent_num2d*100:.2f}%)")
+    if verbose:
+        print("\n--- 3. SHANNON INFORMATION ENTROPY ---")
+        print(f"Decena Entropy:   {ent_dec:.4f} bits (Max theoretical: {max_ent_digit:.4f} bits, Efficiency: {ent_dec/max_ent_digit*100:.2f}%)")
+        print(f"Unidad Entropy:   {ent_uni:.4f} bits (Max theoretical: {max_ent_digit:.4f} bits, Efficiency: {ent_uni/max_ent_digit*100:.2f}%)")
+        print(f"Number 2D Entropy:{ent_num2d:.4f} bits (Max theoretical: {max_ent_num2d:.4f} bits, Efficiency: {ent_num2d/max_ent_num2d*100:.2f}%)")
     
     # 4. HOT & COLD ANOMALY RANKING
     # Top 5 most frequent 2D numbers
@@ -141,13 +145,14 @@ def run_statistical_audit(df, lottery_name=None):
     top5_hot_dec = sub['decena'].value_counts().head(5)
     top5_hot_uni = sub['unidad'].value_counts().head(5)
     
-    print("\n--- 4. HOT & COLD ANOMALIES (SINCE JULY 2026) ---")
-    print("Top 5 Hot Numbers (2D): " + ", ".join([f"{num:02d} ({cnt}x)" for num, cnt in top5_hot_2d.items()]))
-    print("Top 5 Cold/Delayed (2D): " + ", ".join([f"{num:02d} ({del_cnt} draws ago)" for num, del_cnt in top5_delay_2d]))
-    print("Top 5 Hot Decenas:      " + ", ".join([f"Dec {d} ({cnt}x)" for d, cnt in top5_hot_dec.items()]))
-    print("Top 5 Delayed Decenas:  " + ", ".join([f"Dec {d} ({del_cnt} draws)" for d, del_cnt in top5_delay_dec]))
-    print("Top 5 Hot Unidades:     " + ", ".join([f"Uni {u} ({cnt}x)" for u, cnt in top5_hot_uni.items()]))
-    print("Top 5 Delayed Unidades: " + ", ".join([f"Uni {u} ({del_cnt} draws)" for u, del_cnt in top5_delay_uni]))
+    if verbose:
+        print("\n--- 4. HOT & COLD ANOMALIES (SINCE JULY 2026) ---")
+        print("Top 5 Hot Numbers (2D): " + ", ".join([f"{num:02d} ({cnt}x)" for num, cnt in top5_hot_2d.items()]))
+        print("Top 5 Cold/Delayed (2D): " + ", ".join([f"{num:02d} ({del_cnt} draws ago)" for num, del_cnt in top5_delay_2d]))
+        print("Top 5 Hot Decenas:      " + ", ".join([f"Dec {d} ({cnt}x)" for d, cnt in top5_hot_dec.items()]))
+        print("Top 5 Delayed Decenas:  " + ", ".join([f"Dec {d} ({del_cnt} draws)" for d, del_cnt in top5_delay_dec]))
+        print("Top 5 Hot Unidades:     " + ", ".join([f"Uni {u} ({cnt}x)" for u, cnt in top5_hot_uni.items()]))
+        print("Top 5 Delayed Unidades: " + ", ".join([f"Uni {u} ({del_cnt} draws)" for u, del_cnt in top5_delay_uni]))
     
     return {
         'lottery': lottery_name or 'combined',

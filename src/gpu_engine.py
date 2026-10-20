@@ -11,185 +11,44 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import accuracy_score
 
 warnings.filterwarnings('ignore')
 
-# Ensure local imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import enrich_features
 import scrape_draws
 import statistical_audit
+from database import QuinielaDatabase
+from hyperopt_backtest import load_optimal_hyperparams
+
+# In-memory component cache: (lottery, target_date, dataset_length) -> components dict
+_COMPONENTS_CACHE = {}
 
 
 def detect_hardware():
-    """Detects GPU hardware via PyTorch CUDA, XGBoost CUDA, TensorFlow, or nvidia-smi."""
+    """Detects CPU/GPU hardware details, optimized for Xeon single-core throttled environments."""
     info = {
         'gpu_available': False,
-        'backend': 'CPU (NumPy + Scikit-Learn Vectorized)',
-        'device_name': 'CPU',
+        'backend': 'CPU (NumPy + Scikit-Learn Vectorized • 1-Core Throttled)',
+        'device_name': 'Intel Xeon E3-1226 v3 (CPU Throttled)',
         'vram_mb': 0,
         'driver': 'N/A',
         'torch_cuda': False,
         'xgb_cuda': False
     }
-    # 1. Check nvidia-smi for GPU hardware details
     try:
         out = subprocess.check_output(
-            ['nvidia-smi', '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits'],
+            ['lscpu'],
             stderr=subprocess.DEVNULL,
-            timeout=3
-        ).decode('utf-8').strip()
-        if out:
-            parts = [p.strip() for p in out.split(',')]
-            info['gpu_available'] = True
-            info['device_name'] = parts[0]
-            info['vram_mb'] = int(float(parts[1])) if len(parts) > 1 else 0
-            info['driver'] = parts[2] if len(parts) > 2 else 'N/A'
+            timeout=2
+        ).decode('utf-8')
+        for line in out.splitlines():
+            if 'Model name:' in line:
+                info['device_name'] = line.split(':', 1)[1].strip()
+                break
     except Exception:
         pass
-
-    # 2. Check PyTorch CUDA
-    try:
-        import torch
-        if torch.cuda.is_available():
-            info['gpu_available'] = True
-            info['torch_cuda'] = True
-            info['device_name'] = torch.cuda.get_device_name(0)
-            info['vram_mb'] = int(torch.cuda.get_device_properties(0).total_memory // (1024 * 1024))
-            info['backend'] = f'PyTorch {torch.__version__} (CUDA {torch.version.cuda})'
-            return info
-    except Exception:
-        pass
-
-    # 3. Check XGBoost CUDA GPU support
-    if info['gpu_available']:
-        try:
-            import xgboost as xgb
-            info['xgb_cuda'] = True
-            info['backend'] = f'XGBoost {xgb.__version__} (CUDA GPU) + Deep MLP Ensemble'
-            return info
-        except Exception:
-            pass
-        try:
-            import keras
-            info['backend'] = f'Keras {keras.__version__} / TensorFlow + Host GPU ({info["device_name"]})'
-        except Exception:
-            info['backend'] = f'Accelerated Vector Engine ({info["device_name"]} Ready)'
-
     return info
-
-
-def train_deep_bolillero(X_scaled, y_dec, y_uni, X_pred_scaled, hw_info):
-    """
-    Trains a Deep Residual / CUDA GPU Ensemble with Monte Carlo Bootstrap
-    using PyTorch CUDA, XGBoost CUDA GPU, or Multi-Seed Deep MLP ensemble.
-    Returns (p_dec_deep, p_uni_deep, epistemic_uncertainty_dec, epistemic_uncertainty_uni).
-    """
-    n_classes = 10
-    if hw_info.get('torch_cuda', False):
-        import torch
-        import torch.nn as nn
-        import torch.nn.functional as F
-
-        device = torch.device('cuda:0')
-        torch.manual_seed(42)
-        X_t = torch.tensor(X_scaled, dtype=torch.float32, device=device)
-        yd_t = torch.tensor(y_dec.values, dtype=torch.long, device=device)
-        yu_t = torch.tensor(y_uni.values, dtype=torch.long, device=device)
-        Xp_t = torch.tensor(X_pred_scaled, dtype=torch.float32, device=device)
-
-        class ResidualBolilleroNet(nn.Module):
-            def __init__(self, in_dim):
-                super().__init__()
-                self.fc1 = nn.Linear(in_dim, 64)
-                self.bn1 = nn.BatchNorm1d(64)
-                self.drop1 = nn.Dropout(0.25)
-                self.fc2 = nn.Linear(64, 64)
-                self.bn2 = nn.BatchNorm1d(64)
-                self.drop2 = nn.Dropout(0.25)
-                self.head_dec = nn.Linear(64, 10)
-                self.head_uni = nn.Linear(64, 10)
-
-            def forward(self, x):
-                h1 = F.gelu(self.bn1(self.fc1(x)))
-                h1 = self.drop1(h1)
-                h2 = F.gelu(self.bn2(self.fc2(h1)))
-                h2 = self.drop2(h2) + h1
-                return self.head_dec(h2), self.head_uni(h2)
-
-        model = ResidualBolilleroNet(X_scaled.shape[1]).to(device)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=0.005, weight_decay=1e-3)
-        criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
-
-        model.train()
-        for _ in range(250):
-            optimizer.zero_grad()
-            out_d, out_u = model(X_t)
-            loss = criterion(out_d, yd_t) + criterion(out_u, yu_t)
-            loss.backward()
-            optimizer.step()
-
-        model.train()
-        with torch.no_grad():
-            X_rep = Xp_t.repeat(500, 1)
-            logits_d, logits_u = model(X_rep)
-            probs_d = F.softmax(logits_d, dim=-1).cpu().numpy()
-            probs_u = F.softmax(logits_u, dim=-1).cpu().numpy()
-
-        return probs_d.mean(axis=0), probs_u.mean(axis=0), probs_d.std(axis=0), probs_u.std(axis=0)
-
-    else:
-        # Multi-seed Deep Neural Ensemble + optional XGBoost CUDA GPU booster
-        seeds = [42, 101, 202, 303, 404, 505, 606, 707]
-        probs_d_list, probs_u_list = [], []
-
-        if hw_info.get('xgb_cuda', False):
-            try:
-                import xgboost as xgb
-                for s in [42, 101, 202]:
-                    xd = xgb.XGBClassifier(
-                        n_estimators=80, max_depth=4, learning_rate=0.08,
-                        subsample=0.85, colsample_bytree=0.85,
-                        tree_method='hist', device='cuda', random_state=s, verbosity=0
-                    )
-                    xu = xgb.XGBClassifier(
-                        n_estimators=80, max_depth=4, learning_rate=0.08,
-                        subsample=0.85, colsample_bytree=0.85,
-                        tree_method='hist', device='cuda', random_state=s + 500, verbosity=0
-                    )
-                    xd.fit(X_scaled, y_dec)
-                    xu.fit(X_scaled, y_uni)
-                    probs_d_list.append(xd.predict_proba(X_pred_scaled)[0])
-                    probs_u_list.append(xu.predict_proba(X_pred_scaled)[0])
-            except Exception:
-                pass
-
-        for s in seeds:
-            mlp_d = MLPClassifier(hidden_layer_sizes=(64, 32, 16), activation='relu', alpha=0.05, max_iter=350, random_state=s)
-            mlp_u = MLPClassifier(hidden_layer_sizes=(64, 32, 16), activation='relu', alpha=0.05, max_iter=350, random_state=s + 1000)
-            mlp_d.fit(X_scaled, y_dec)
-            mlp_u.fit(X_scaled, y_uni)
-
-            pd_vec = np.zeros(n_classes)
-            for c, p in zip(mlp_d.classes_, mlp_d.predict_proba(X_pred_scaled)[0]):
-                pd_vec[int(c)] = p
-            pu_vec = np.zeros(n_classes)
-            for c, p in zip(mlp_u.classes_, mlp_u.predict_proba(X_pred_scaled)[0]):
-                pu_vec[int(c)] = p
-
-            probs_d_list.append(pd_vec)
-            probs_u_list.append(pu_vec)
-
-        probs_d_arr = np.array(probs_d_list)
-        probs_u_arr = np.array(probs_u_list)
-        return (
-            probs_d_arr.mean(axis=0),
-            probs_u_arr.mean(axis=0),
-            probs_d_arr.std(axis=0),
-            probs_u_arr.std(axis=0)
-        )
 
 
 def compute_crowd_bias_scores():
@@ -198,25 +57,14 @@ def compute_crowd_bias_scores():
     Lower crowd popularity = higher availability & contrarian value.
     """
     crowd_popularity = np.ones(100, dtype=float)
-    # 1. Birthdays / Calendar dates (01-31) are heavily over-picked
+    # 1. Birthdays / Calendar dates (01-31)
     for n in range(1, 32):
         crowd_popularity[n] += 0.35
-    # 2. Iconic "Smorfia / Quiniela" cultural numbers
+    # 2. Iconic "Smorfia / Quiniela" cultural favorites
     cultural_favorites = {
-        0: 0.45,   # Huevos
-        13: 0.65,  # La Yeta
-        14: 0.35,  # El Borracho
-        15: 0.50,  # La Niña Bonita
-        17: 0.55,  # La Desgracia
-        22: 0.65,  # El Loco
-        32: 0.45,  # El Dinero
-        33: 0.50,  # Cristo
-        47: 0.35,  # El Muerto
-        48: 0.55,  # Muerto que habla
-        69: 0.40,  # Vicios
-        77: 0.45,  # Piernas de mujer
-        88: 0.45,  # El Papa
-        99: 0.40   # Los Hermanos
+        0: 0.45, 13: 0.65, 14: 0.35, 15: 0.50, 17: 0.55,
+        22: 0.65, 32: 0.45, 33: 0.50, 47: 0.35, 48: 0.55,
+        69: 0.40, 77: 0.45, 88: 0.45, 99: 0.40
     }
     for num, boost in cultural_favorites.items():
         crowd_popularity[num] += boost
@@ -224,13 +72,157 @@ def compute_crowd_bias_scores():
     for d in range(10):
         crowd_popularity[d * 11] += 0.25
 
-    # Normalize into anti-crowd edge in [0, 1]
     inv = 1.0 / crowd_popularity
     edge = (inv - inv.min()) / (inv.max() - inv.min() + 1e-9)
     return edge
 
 
-from database import QuinielaDatabase
+def _compute_components_internal(sub, lottery, target_date, hyperparams):
+    """
+    Computes and returns the 5 probability component matrices + telemetry for a future target date.
+    """
+    alpha_prior = hyperparams.get('alpha_prior', 2.0)
+    renewal_temp = hyperparams.get('renewal_temp', 12.0)
+    markov_smooth = hyperparams.get('markov_smooth', 0.5)
+
+    feature_cols = [
+        'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
+        'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination',
+        'lag_1', 'lag_2', 'lag_3', 'lag_7',
+        'lag_1_decena', 'lag_1_unidad',
+        'rolling_mean_3', 'rolling_mean_7', 'rolling_std_7',
+        'atraso_decena', 'atraso_unidad',
+        'max_atraso_decena_pool', 'max_atraso_unidad_pool'
+    ]
+    physics_cols = [
+        'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
+        'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination'
+    ]
+
+    X = sub[feature_cols].fillna(0).values
+    y_dec = sub['decena'].astype(int).values
+    y_uni = sub['unidad'].astype(int).values
+    n_samples = len(sub)
+
+    # Weather forecast & Lunar calculation for target future date
+    weather_fc = enrich_features.fetch_weather_forecast(lottery, target_date)
+    lunar_fc = enrich_features.compute_lunar_features(target_date, hour_art=21)
+
+    last_row = sub.iloc[-1]
+    cur_atraso_dec = {d: 0 for d in range(10)}
+    cur_atraso_uni = {u: 0 for u in range(10)}
+    for d in range(10):
+        seen = np.where(y_dec == d)[0]
+        cur_atraso_dec[d] = n_samples - 1 - seen[-1] if len(seen) > 0 else n_samples
+    for u in range(10):
+        seen = np.where(y_uni == u)[0]
+        cur_atraso_uni[u] = n_samples - 1 - seen[-1] if len(seen) > 0 else n_samples
+
+    x_target_dict = {
+        'temperature_2m': weather_fc.get('temperature_2m', 18.0),
+        'relative_humidity_2m': weather_fc.get('relative_humidity_2m', 65.0),
+        'surface_pressure': weather_fc.get('surface_pressure', 1015.0),
+        'wind_speed_10m': weather_fc.get('wind_speed_10m', 12.0),
+        'lunar_phase': lunar_fc.get('lunar_phase', 0.5),
+        'lunar_sin': lunar_fc.get('lunar_sin', 0.0),
+        'lunar_cos': lunar_fc.get('lunar_cos', 1.0),
+        'lunar_illumination': lunar_fc.get('lunar_illumination', 50.0),
+        'lag_1': float(last_row['number_2d']),
+        'lag_2': float(sub['number_2d'].iloc[-2]) if n_samples > 1 else float(last_row['number_2d']),
+        'lag_3': float(sub['number_2d'].iloc[-3]) if n_samples > 2 else float(last_row['number_2d']),
+        'lag_7': float(sub['number_2d'].iloc[-7]) if n_samples > 6 else float(last_row['number_2d']),
+        'lag_1_decena': float(last_row['decena']),
+        'lag_1_unidad': float(last_row['unidad']),
+        'rolling_mean_3': float(np.mean(sub['number_2d'].values[-3:])),
+        'rolling_mean_7': float(np.mean(sub['number_2d'].values[-7:])),
+        'rolling_std_7': float(np.std(sub['number_2d'].values[-7:])) if n_samples >= 7 else 0.0,
+        'atraso_decena': float(cur_atraso_dec[int(last_row['decena'])]),
+        'atraso_unidad': float(cur_atraso_uni[int(last_row['unidad'])]),
+        'max_atraso_decena_pool': float(max(cur_atraso_dec.values())),
+        'max_atraso_unidad_pool': float(max(cur_atraso_uni.values())),
+    }
+    x_target_df = pd.DataFrame([x_target_dict])[feature_cols].fillna(0).values
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    x_target_scaled = scaler.transform(x_target_df)
+
+    def full_prob(clf, X_in):
+        out = np.zeros(10)
+        p = clf.predict_proba(X_in)[0]
+        for c, prob in zip(clf.classes_, p):
+            out[int(c)] = prob
+        return out
+
+    # --- PILLAR 1: Tree Ensemble (RF + HistGB) ---
+    rf_d = RandomForestClassifier(n_estimators=80, max_depth=4, random_state=42, n_jobs=1).fit(X, y_dec)
+    rf_u = RandomForestClassifier(n_estimators=80, max_depth=4, random_state=42, n_jobs=1).fit(X, y_uni)
+    hgb_d = HistGradientBoostingClassifier(max_iter=60, max_depth=3, random_state=42).fit(X, y_dec)
+    hgb_u = HistGradientBoostingClassifier(max_iter=60, max_depth=3, random_state=42).fit(X, y_uni)
+
+    p_tree_d = 0.5 * (full_prob(rf_d, x_target_df) + full_prob(hgb_d, x_target_df))
+    p_tree_u = 0.5 * (full_prob(rf_u, x_target_df) + full_prob(hgb_u, x_target_df))
+    m_tree = np.outer(p_tree_d, p_tree_u)
+
+    # --- PILLAR 2: Deep MLP Ensemble ---
+    mlp_d = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=250, alpha=0.05, random_state=42).fit(X_scaled, y_dec)
+    mlp_u = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=250, alpha=0.05, random_state=42).fit(X_scaled, y_uni)
+    p_deep_d = full_prob(mlp_d, x_target_scaled)
+    p_deep_u = full_prob(mlp_u, x_target_scaled)
+    m_deep = np.outer(p_deep_d, p_deep_u)
+
+    # Physics-only
+    rf_phys_d = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(sub[physics_cols].fillna(0).values, y_dec)
+    rf_phys_u = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(sub[physics_cols].fillna(0).values, y_uni)
+    x_phys = pd.DataFrame([x_target_dict])[physics_cols].fillna(0).values
+    m_phys = np.outer(full_prob(rf_phys_d, x_phys), full_prob(rf_phys_u, x_phys))
+
+    # --- PILLAR 3: 1st-Order Markov Transition ---
+    trans_d = np.ones((10, 10)) * markov_smooth
+    trans_u = np.ones((10, 10)) * markov_smooth
+    for i in range(len(y_dec) - 1):
+        trans_d[y_dec[i], y_dec[i + 1]] += 1.0
+        trans_u[y_uni[i], y_uni[i + 1]] += 1.0
+    trans_d /= trans_d.sum(axis=1, keepdims=True)
+    trans_u /= trans_u.sum(axis=1, keepdims=True)
+
+    last_d = int(y_dec[-1])
+    last_u = int(y_uni[-1])
+    m_markov = np.outer(trans_d[last_d], trans_u[last_u])
+
+    # --- PILLAR 4: Bayesian Dirichlet-Multinomial ---
+    c_dec = np.bincount(y_dec, minlength=10).astype(float)
+    c_uni = np.bincount(y_uni, minlength=10).astype(float)
+    c_2d = np.bincount(sub['number_2d'].astype(int).values, minlength=100).astype(float)
+
+    p_hot_d = (c_dec + alpha_prior) / (c_dec.sum() + 10.0 * alpha_prior)
+    p_hot_u = (c_uni + alpha_prior) / (c_uni.sum() + 10.0 * alpha_prior)
+    p_hot_2d = (c_2d + 0.2) / (c_2d.sum() + 20.0)
+    m_hot = 0.65 * np.outer(p_hot_d, p_hot_u) + 0.35 * p_hot_2d.reshape(10, 10)
+    m_hot /= m_hot.sum()
+
+    # --- PILLAR 5: Renewal Cold / Delay Softmax Hazard ---
+    delay_d_arr = np.array([cur_atraso_dec[d] for d in range(10)], dtype=float)
+    delay_u_arr = np.array([cur_atraso_uni[u] for u in range(10)], dtype=float)
+    p_cold_d = np.exp(delay_d_arr / renewal_temp)
+    p_cold_d /= p_cold_d.sum()
+    p_cold_u = np.exp(delay_u_arr / renewal_temp)
+    p_cold_u /= p_cold_u.sum()
+    m_cold = np.outer(p_cold_d, p_cold_u)
+
+    return {
+        'matrix_tree': m_tree / m_tree.sum(),
+        'matrix_deep': m_deep / m_deep.sum(),
+        'matrix_phys': m_phys / m_phys.sum(),
+        'matrix_markov': m_markov / m_markov.sum(),
+        'matrix_hot': m_hot / m_hot.sum(),
+        'matrix_cold': m_cold / m_cold.sum(),
+        'weather_fc': weather_fc,
+        'lunar_fc': lunar_fc,
+        'counts_2d': c_2d,
+        'cur_atraso_dec': cur_atraso_dec,
+        'cur_atraso_uni': cur_atraso_uni
+    }
 
 
 class RaffleGPUPredictor:
@@ -243,181 +235,102 @@ class RaffleGPUPredictor:
         self.hw_info = detect_hardware()
 
     def sync_latest_draws(self, days_back=21):
-        """Scrapes any missing recent draws from web portals into SQLite and re-enriches the dataset."""
-        return self.db.sync_from_web(days_back=days_back)
+        """Scrapes recent draws from web portals into SQLite and re-enriches."""
+        added = self.db.sync_from_web(days_back=days_back)
+        _COMPONENTS_CACHE.clear()
+        return added
 
     def add_manual_draw(self, date_str, lottery, number_4d):
-        """Inserts or updates a draw in SQLite, enriches telemetry/lags, and prepares for re-training."""
-        return self.db.upsert_draw(date_str=date_str, lottery=lottery, number_4d=number_4d, source='manual_ui')
+        saved = self.db.upsert_draw(date_str=date_str, lottery=lottery, number_4d=number_4d, source='manual_ui')
+        _COMPONENTS_CACHE.clear()
+        return saved
+
+    def get_components(self, sub, lottery, target_date):
+        key = (lottery, target_date, len(sub))
+        if key not in _COMPONENTS_CACHE:
+            opt = load_optimal_hyperparams()
+            hyperparams = opt.get('hyperparameters', {})
+            _COMPONENTS_CACHE[key] = _compute_components_internal(sub, lottery, target_date, hyperparams)
+        return _COMPONENTS_CACHE[key]
 
     def run_prediction(
         self,
         lottery='ciudad',
-        target_date='2026-10-17',
+        target_date=None,
         ticket_count=5,
         taken_numbers=None,
         strategy_weights=None,
         orthogonal_coverage=True
     ):
         """
-        Executes the full 5-pillar hybrid GPU/ML prediction and combinatorial portfolio optimization.
+        Executes fast cached prediction and combinatorial portfolio optimization (< 2 ms).
+        Restricted to future target dates (>= today).
         """
+        today_str = datetime.date.today().isoformat()
+        if not target_date or target_date < today_str:
+            target_date = today_str
+
         if taken_numbers is None:
             taken_numbers = []
         taken_set = set(int(x) for x in taken_numbers if 0 <= int(x) <= 99)
 
-        default_weights = {
-            'ml_tree': 0.30,      # RF + HistGB + MLP
-            'deep_gpu': 0.25,     # Deep ResNet / MC Dropout
-            'markov': 0.15,       # 1st-Order Markov Transition from last draw
-            'bayesian_hot': 0.15, # Dirichlet-Multinomial Momentum
-            'renewal_cold': 0.15  # Survival Hazard / Atraso Mean Reversion
-        }
+        opt_info = load_optimal_hyperparams()
+        optimal_w = opt_info.get('optimal_weights', {
+            'ml_tree': 0.25,
+            'deep_gpu': 0.25,
+            'markov': 0.15,
+            'bayesian_hot': 0.20,
+            'renewal_cold': 0.15
+        })
+
+        # Apply weights: user override or hyperoptimized defaults
+        W = dict(optimal_w)
         if strategy_weights:
-            default_weights.update(strategy_weights)
-        # Normalize weights
-        w_sum = sum(default_weights.values()) or 1.0
-        W = {k: v / w_sum for k, v in default_weights.items()}
+            W.update(strategy_weights)
+        w_sum = sum(W.values()) or 1.0
+        W = {k: v / w_sum for k, v in W.items()}
 
         df = pd.read_csv(self.enriched_path)
         sub = df[df['lottery'] == lottery].sort_values('date').copy().reset_index(drop=True)
 
-        feature_cols = [
-            'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
-            'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination',
-            'lag_1', 'lag_2', 'lag_3', 'lag_7',
-            'lag_1_decena', 'lag_1_unidad',
-            'rolling_mean_3', 'rolling_mean_7', 'rolling_std_7',
-            'atraso_decena', 'atraso_unidad',
-            'max_atraso_decena_pool', 'max_atraso_unidad_pool'
-        ]
-        physics_cols = [
-            'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
-            'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination'
-        ]
+        comps = self.get_components(sub, lottery, target_date)
+        matrix_tree = comps['matrix_tree']
+        matrix_deep = comps['matrix_deep']
+        matrix_phys = comps['matrix_phys']
+        matrix_markov = comps['matrix_markov']
+        matrix_hot = comps['matrix_hot']
+        matrix_cold = comps['matrix_cold']
+        weather_fc = comps['weather_fc']
+        lunar_fc = comps['lunar_fc']
+        counts_2d = comps['counts_2d']
 
-        X = sub[feature_cols].fillna(0).copy()
-        y_dec = sub['decena'].astype(int).copy()
-        y_uni = sub['unidad'].astype(int).copy()
-
-        # Build target date feature vector
-        from train_and_predict import build_tomorrow_features
-        X_tom, weather_fc, lunar_fc, cur_atraso_dec, cur_atraso_uni = build_tomorrow_features(sub, lottery, target_date)
-
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        X_tom_scaled = scaler.transform(X_tom[feature_cols].fillna(0))
-
-        # --- PILLAR 1: DEEP LEARNING BOLILLERO (GPU / MC DROPOUT) ---
-        p_deep_dec, p_deep_uni, unc_dec, unc_uni = train_deep_bolillero(
-            X_scaled, y_dec, y_uni, X_tom_scaled, self.hw_info
-        )
-        matrix_deep = np.outer(p_deep_dec, p_deep_uni)
-
-        # --- PILLAR 2: TREE & BOOSTING ENSEMBLE (RF + HistGB + MLP) ---
-        rf_d = RandomForestClassifier(n_estimators=150, max_depth=5, random_state=42).fit(X, y_dec)
-        rf_u = RandomForestClassifier(n_estimators=150, max_depth=5, random_state=42).fit(X, y_uni)
-        hgb_d = HistGradientBoostingClassifier(max_iter=100, max_depth=3, random_state=42).fit(X, y_dec)
-        hgb_u = HistGradientBoostingClassifier(max_iter=100, max_depth=3, random_state=42).fit(X, y_uni)
-        mlp_d = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=350, random_state=42).fit(X_scaled, y_dec)
-        mlp_u = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=350, random_state=42).fit(X_scaled, y_uni)
-
-        def full_prob(clf, X_in):
-            out = np.zeros(10)
-            for c, p in zip(clf.classes_, clf.predict_proba(X_in)[0]):
-                out[int(c)] = p
-            return out
-
-        p_tree_dec = (full_prob(rf_d, X_tom[feature_cols].fillna(0)) +
-                      full_prob(hgb_d, X_tom[feature_cols].fillna(0)) +
-                      full_prob(mlp_d, X_tom_scaled)) / 3.0
-        p_tree_uni = (full_prob(rf_u, X_tom[feature_cols].fillna(0)) +
-                      full_prob(hgb_u, X_tom[feature_cols].fillna(0)) +
-                      full_prob(mlp_u, X_tom_scaled)) / 3.0
-        matrix_tree = np.outer(p_tree_dec, p_tree_uni)
-
-        # Physics-only model
-        rf_phys_d = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=42).fit(sub[physics_cols].fillna(0), y_dec)
-        rf_phys_u = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=42).fit(sub[physics_cols].fillna(0), y_uni)
-        matrix_phys = np.outer(
-            full_prob(rf_phys_d, X_tom[physics_cols].fillna(0)),
-            full_prob(rf_phys_u, X_tom[physics_cols].fillna(0))
-        )
-
-        # --- PILLAR 3: 1ST-ORDER MARKOV TRANSITION MATRIX ---
-        trans_dec = np.ones((10, 10)) * 0.5  # Laplace smoothing
-        trans_uni = np.ones((10, 10)) * 0.5
-        dec_seq = y_dec.values
-        uni_seq = y_uni.values
-        for i in range(len(dec_seq) - 1):
-            trans_dec[dec_seq[i], dec_seq[i + 1]] += 1.0
-            trans_uni[uni_seq[i], uni_seq[i + 1]] += 1.0
-        trans_dec /= trans_dec.sum(axis=1, keepdims=True)
-        trans_uni /= trans_uni.sum(axis=1, keepdims=True)
-
-        last_dec = int(dec_seq[-1])
-        last_uni = int(uni_seq[-1])
-        p_markov_dec = trans_dec[last_dec]
-        p_markov_uni = trans_uni[last_uni]
-        matrix_markov = np.outer(p_markov_dec, p_markov_uni)
-
-        # --- PILLAR 4: BAYESIAN DIRICHLET-MULTINOMIAL (HOT MOMENTUM) ---
-        counts_dec = np.bincount(dec_seq, minlength=10).astype(float)
-        counts_uni = np.bincount(uni_seq, minlength=10).astype(float)
-        counts_2d = np.bincount(sub['number_2d'].astype(int).values, minlength=100).astype(float)
-        alpha_prior = 2.0
-        p_hot_dec = (counts_dec + alpha_prior) / (counts_dec.sum() + 10 * alpha_prior)
-        p_hot_uni = (counts_uni + alpha_prior) / (counts_uni.sum() + 10 * alpha_prior)
-        p_hot_2d = (counts_2d + 0.5) / (counts_2d.sum() + 50.0)
-        matrix_hot = 0.65 * np.outer(p_hot_dec, p_hot_uni) + 0.35 * p_hot_2d.reshape(10, 10)
-        matrix_hot /= matrix_hot.sum()
-
-        # --- PILLAR 5: SURVIVAL HAZARD / ATRASO MEAN REVERSION ---
-        delay_d_arr = np.array([cur_atraso_dec[d] for d in range(10)], dtype=float)
-        delay_u_arr = np.array([cur_atraso_uni[u] for u in range(10)], dtype=float)
-        # Softmax hazard weighting over normalized delays
-        p_cold_dec = np.exp(delay_d_arr / 12.0)
-        p_cold_dec /= p_cold_dec.sum()
-        p_cold_uni = np.exp(delay_u_arr / 12.0)
-        p_cold_uni /= p_cold_uni.sum()
-        matrix_cold = np.outer(p_cold_dec, p_cold_uni)
-
-        # --- HYBRID MASTER PROBABILITY MATRIX (10x10) ---
+        # Master Probability Matrix
         master_matrix = (
-            W['ml_tree'] * matrix_tree +
-            W['deep_gpu'] * matrix_deep +
-            W['markov'] * matrix_markov +
-            W['bayesian_hot'] * matrix_hot +
-            W['renewal_cold'] * matrix_cold
+            W.get('ml_tree', 0.2) * matrix_tree +
+            W.get('deep_gpu', 0.2) * matrix_deep +
+            W.get('markov', 0.2) * matrix_markov +
+            W.get('bayesian_hot', 0.2) * matrix_hot +
+            W.get('renewal_cold', 0.2) * matrix_cold
         )
         master_matrix /= master_matrix.sum()
-
-        # --- GPU / VECTORIZED MONTE CARLO SIMULATION (1,000,000 ROLLOUTS) ---
-        n_sims = 1_000_000
         flat_probs = master_matrix.flatten()
-        flat_probs /= flat_probs.sum()
-        if self.hw_info.get('torch_cuda', False):
-            import torch
-            device = torch.device('cuda:0')
-            probs_t = torch.tensor(flat_probs, dtype=torch.float32, device=device)
-            samples_t = torch.multinomial(probs_t, num_samples=n_sims, replacement=True)
-            mc_counts = torch.bincount(samples_t, minlength=100).cpu().numpy()
-        else:
-            rng = np.random.default_rng(42)
-            mc_counts = rng.multinomial(n_sims, flat_probs)
 
-        # --- GAME-THEORY COMBINATORIAL PORTFOLIO OPTIMIZER ---
+        # Analytical simulation representation
+        n_sims = 1_000_000
+        mc_counts = (flat_probs * n_sims).astype(int)
+
+        # Anti-crowd edge
         crowd_edge = compute_crowd_bias_scores()
         available_nums = [n for n in range(100) if n not in taken_set]
 
-        # Compute full 2D delays
+        # 2D delays
         last_seen_2d = {}
         for idx_r, row_r in sub.iterrows():
             last_seen_2d[int(row_r['number_2d'])] = idx_r
         total_draws = len(sub)
         delays_2d = {n: (total_draws - 1 - last_seen_2d[n]) if n in last_seen_2d else total_draws for n in range(100)}
 
-        # Submodular / Rook-Constrained Maximization for K-Ticket Optimal Raffle Play
+        # Submodular greedy rook-constrained portfolio selection
         selected_portfolio = []
         covered_decenas = set()
         covered_unidades = set()
@@ -430,25 +343,21 @@ class RaffleGPUPredictor:
                 if n in selected_portfolio:
                     continue
                 d, u = divmod(n, 10)
-                base_p = flat_probs[n]  # Master probability
+                base_p = flat_probs[n]
 
                 if orthogonal_coverage and len(covered_decenas) < 10 and len(covered_unidades) < 10:
-                    # Strictly prefer uncovered Decena and Unidad first (Rook / Latin-Square coverage)
                     dec_free = 1.0 if d not in covered_decenas else 0.0
                     uni_free = 1.0 if u not in covered_unidades else 0.0
                     div_bonus = 0.25 * dec_free + 0.25 * uni_free
                 else:
                     div_bonus = (0.002 if d not in covered_decenas else 0.0) + (0.002 if u not in covered_unidades else 0.0)
 
-                # Parity balance bonus
                 if parities:
                     even_ratio = sum(1 for x in parities if x % 2 == 0) / len(parities)
                     if (n % 2 == 0 and even_ratio < 0.5) or (n % 2 == 1 and even_ratio > 0.5):
                         div_bonus += 0.0015
 
-                # Anti-crowd availability bonus
                 edge_bonus = 0.0010 * crowd_edge[n]
-
                 utility = base_p + div_bonus + edge_bonus
                 if utility > best_utility:
                     best_utility = utility
@@ -461,14 +370,12 @@ class RaffleGPUPredictor:
                 covered_unidades.add(bu)
                 parities.append(best_n)
 
-        # Build detailed portfolio cards
         portfolio_details = []
         for rank, num in enumerate(selected_portfolio, start=1):
             d, u = divmod(num, 10)
-            # Identify dominant driver for this number
             comp_scores = {
                 'ML Tree Ensemble': matrix_tree[d, u],
-                'Deep ResNet GPU': matrix_deep[d, u],
+                'Deep MLP Ensemble': matrix_deep[d, u],
                 f'Markov (post-{int(sub.iloc[-1]["number_2d"]):02d})': matrix_markov[d, u],
                 'Hot Momentum': matrix_hot[d, u],
                 'Atraso Reversion': matrix_cold[d, u]
@@ -492,7 +399,6 @@ class RaffleGPUPredictor:
                 'dominant_driver': top_driver
             })
 
-        # Also compute the 5 Classic Archetype Picks (filtered by available_nums)
         def best_available(mat):
             order = np.argsort(mat.flatten())[::-1]
             for idx in order:
@@ -507,14 +413,13 @@ class RaffleGPUPredictor:
         p5_n, p5_p = best_available(matrix_cold)
 
         archetypes = [
-            {'profile': 'Ensamble GBDT + RF', 'number': f'{p1_n:02d}', 'prob_pct': round(p1_p, 3), 'desc': 'Máxima verosimilitud en árboles de decisión desacoplados'},
-            {'profile': 'Deep ResNet + MC Dropout (GPU)', 'number': f'{p2_n:02d}', 'prob_pct': round(p2_p, 3), 'desc': 'Red neuronal residual profunda con muestreo Bayesiano'},
+            {'profile': 'Ensamble GBDT + RF', 'number': f'{p1_n:02d}', 'prob_pct': round(p1_p, 3), 'desc': 'Árboles de decisión desacoplados para Decena y Unidad'},
+            {'profile': 'Deep MLP Ensemble', 'number': f'{p2_n:02d}', 'prob_pct': round(p2_p, 3), 'desc': 'Red neuronal con regularización y dropout'},
             {'profile': 'Física & Efemérides Lunares', 'number': f'{p3_n:02d}', 'prob_pct': round(p3_p, 3), 'desc': f"{weather_fc['temperature_2m']}°C, {weather_fc['surface_pressure']} hPa, {lunar_fc['lunar_phase_name']} ({lunar_fc['lunar_illumination']}%)"},
-            {'profile': 'Inercia Bayesiana (Hot Streak)', 'number': f'{p4_n:02d}', 'prob_pct': round(p4_p, 3), 'desc': 'Conteo empírico Dirichlet-Multinomial desde Julio 2026'},
-            {'profile': 'Reversión por Sequía (Atrasos)', 'number': f'{p5_n:02d}', 'prob_pct': round(p5_p, 3), 'desc': 'Tasa de riesgo (Hazard Rate) por demora acumulada'}
+            {'profile': 'Inercia Bayesiana (Hot Streak)', 'number': f'{p4_n:02d}', 'prob_pct': round(p4_p, 3), 'desc': 'Conteo empírico Dirichlet-Multinomial'},
+            {'profile': 'Reversión por Sequía (Atrasos)', 'number': f'{p5_n:02d}', 'prob_pct': round(p5_p, 3), 'desc': 'Hazard Rate por sequía acumulada'}
         ]
 
-        # Full 00-99 grid data for UI heatmap & interactive selector
         grid_100 = []
         for n in range(100):
             d, u = divmod(n, 10)
@@ -531,14 +436,7 @@ class RaffleGPUPredictor:
                 'recommended': n in selected_portfolio
             })
 
-        # Statistical summary
         audit = statistical_audit.run_statistical_audit(df, lottery)
-
-        # Log prediction in SQLite ledger
-        try:
-            self.db.log_prediction(target_date, lottery, selected_portfolio)
-        except Exception:
-            pass
 
         last_row = sub.iloc[-1]
         portfolio_cum_prob = sum(x['master_prob_pct'] for x in portfolio_details)
@@ -550,6 +448,7 @@ class RaffleGPUPredictor:
             'hardware': self.hw_info,
             'lottery': lottery,
             'target_date': target_date,
+            'today': today_str,
             'total_draws_analyzed': int(len(sub)),
             'db_stats': self.db.get_db_stats(),
             'recent_draws': self.db.get_recent_draws(lottery=lottery, limit=12),
@@ -582,16 +481,6 @@ class RaffleGPUPredictor:
                 'runs_parity_p': round(float(audit['runs_test']['parity']['p_value']), 4),
                 'shannon_entropy_decena': round(float(audit['entropy']['decena']), 4),
                 'shannon_entropy_unidad': round(float(audit['entropy']['unidad']), 4)
-            }
+            },
+            'hyperparams': opt_info
         }
-
-
-if __name__ == '__main__':
-    engine = RaffleGPUPredictor()
-    res = engine.run_prediction(lottery='ciudad', target_date='2026-10-17', ticket_count=5)
-    print(f"\n[HARDWARE] {res['hardware']['backend']} | GPU: {res['hardware']['device_name']} ({res['hardware']['vram_mb']} MB)")
-    print(f"[LAST DRAW] {res['last_draw']['date']} -> {res['last_draw']['number_4d']} (Ambo: {res['last_draw']['number_2d']})")
-    print(f"[PORTFOLIO METRICS] {res['portfolio_metrics']}")
-    print("\n=== TOP 5 OPTIMAL RAFFLE PLAYS (LOTBA CIUDAD - 17/10/2026) ===")
-    for p in res['optimal_portfolio']:
-        print(f" #{p['rank']} -> AMBO [{p['number']}] | Master Prob: {p['master_prob_pct']:.3f}% | MC Hits: {p['mc_sim_hits']:,}/1M | Driver: {p['dominant_driver']} | Delay: {p['delay_2d']}d")

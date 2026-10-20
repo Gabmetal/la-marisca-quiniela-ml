@@ -1,0 +1,44 @@
+{
+  "timestamp": "2026-10-20T02:52:57.971771",
+  "lottery": "ciudad",
+  "total_draws_analyzed": 306,
+  "folds_tested": 54,
+  "optimal_weights": {
+    "ml_tree": 0.0,
+    "deep_gpu": 0.0,
+    "markov": 0.0,
+    "bayesian_hot": 1.0,
+    "renewal_cold": 0.0
+  },
+  "hyperparameters": {
+    "alpha_prior": 2.0,
+    "renewal_temp": 12.0,
+    "markov_smooth": 0.5
+  },
+  "backtest_results": {
+    "total_evaluated": 54,
+    "log_loss_mean": 4.747680077930228,
+    "brier_score_mean": 1.8208768502046038,
+    "hit_1_pct": 0.0,
+    "hit_3_pct": 1.85,
+    "hit_5_pct": 1.85,
+    "hit_10_pct": 5.56,
+    "hit_decena_pct": 3.7,
+    "hit_unidad_pct": 9.26,
+    "lift_hit_5_pct": -62.96,
+    "lift_hit_10_pct": -44.44
+  },
+  "baseline_uniform_results": {
+    "total_evaluated": 54,
+    "log_loss_mean": 4.989058742811233,
+    "brier_score_mean": 1.8817962891967535,
+    "hit_1_pct": 0.0,
+    "hit_3_pct": 0.0,
+    "hit_5_pct": 3.7,
+    "hit_10_pct": 3.7,
+    "hit_decena_pct": 5.56,
+    "hit_unidad_pct": 3.7,
+    "lift_hit_5_pct": -25.93,
+    "lift_hit_10_pct": -62.96
+  }
+}
