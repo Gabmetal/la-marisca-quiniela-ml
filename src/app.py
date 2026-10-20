@@ -171,24 +171,28 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="p-3 rounded-xl bg-purple-950/20 border border-purple-500/20 space-y-2">
           <div class="text-xs font-bold text-purple-300 flex items-center justify-between">
             <span>📊 Validación Walk-Forward (Out-of-Sample)</span>
-            <span id="wf-folds" class="font-mono text-[10px] text-purple-400">54 Folds</span>
+            <span id="wf-folds" class="font-mono text-[10px] text-purple-400">77 Folds</span>
           </div>
-          <div class="grid grid-cols-3 gap-2 text-center text-xs">
+          <div class="grid grid-cols-4 gap-1.5 text-center text-xs">
             <div class="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-              <div class="text-slate-400 text-[10px]">Log-Loss</div>
+              <div class="text-slate-400 text-[9px]">Hit@5</div>
+              <div id="wf-hit5" class="font-mono font-bold text-emerald-400 mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+              <div class="text-slate-400 text-[9px]">Hit@10</div>
+              <div id="wf-hit10" class="font-mono font-bold text-teal-300 mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+              <div class="text-slate-400 text-[9px]">Log-Loss</div>
               <div id="wf-logloss" class="font-mono font-bold text-purple-300 mt-0.5">--</div>
             </div>
             <div class="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-              <div class="text-slate-400 text-[10px]">Hit@10 Ambos</div>
-              <div id="wf-hit10" class="font-mono font-bold text-emerald-400 mt-0.5">--</div>
-            </div>
-            <div class="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-              <div class="text-slate-400 text-[10px]">Brier Score</div>
+              <div class="text-slate-400 text-[9px]">Brier</div>
               <div id="wf-brier" class="font-mono font-bold text-cyan-300 mt-0.5">--</div>
             </div>
           </div>
-          <p class="text-[10px] text-slate-400 leading-tight">
-            Parámetros evaluados sobre sorteos históricos no vistos sin lookahead bias.
+          <p id="wf-summary" class="text-[10px] text-slate-400 leading-tight">
+            Parámetros hiperoptimizados con 34 variables físicas, lunares y Poisson delay Z-scores.
           </p>
         </div>
 
@@ -429,10 +433,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       if (data.hyperparams && data.hyperparams.backtest_results) {
         const bt = data.hyperparams.backtest_results;
         document.getElementById('wf-logloss').textContent = bt.log_loss_mean.toFixed(3);
+        if (document.getElementById('wf-hit5')) {
+          document.getElementById('wf-hit5').textContent = `${bt.hit_5_pct}%`;
+        }
         document.getElementById('wf-hit10').textContent = `${bt.hit_10_pct}%`;
         document.getElementById('wf-brier').textContent = bt.brier_score_mean.toFixed(3);
-        document.getElementById('wf-folds').textContent = `${data.hyperparams.folds_tested || 54} Folds`;
-        document.getElementById('backtest-badge').textContent = `Backtest Hit@10: ${bt.hit_10_pct}% (LL: ${bt.log_loss_mean.toFixed(2)})`;
+        document.getElementById('wf-folds').textContent = `${data.hyperparams.folds_tested || 77} Folds`;
+        document.getElementById('backtest-badge').textContent = `Backtest Hit@5: ${bt.hit_5_pct}% (+${bt.lift_hit_5_pct}% lift)`;
+        if (document.getElementById('wf-summary')) {
+          document.getElementById('wf-summary').innerHTML = `Hit@5: <strong class="text-emerald-400">${bt.hit_5_pct}%</strong> (+${bt.lift_hit_5_pct}% lift). Hit Decena: <strong class="text-teal-300">${bt.hit_decena_pct}%</strong>. Log-Loss: <strong class="text-purple-300">${bt.log_loss_mean.toFixed(3)}</strong> (vs base 4.76).`;
+        }
       }
 
       document.getElementById('last-draw-banner').textContent =
@@ -450,12 +460,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const lf = data.lunar_ephemeris;
       document.getElementById('telemetry-box').innerHTML = `
         <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
-          <div class="text-slate-400">Temperatura (21h)</div>
-          <div class="text-white font-bold mt-0.5">${wf.temperature_2m} °C</div>
+          <div class="text-slate-400">Temperatura / Rocío</div>
+          <div class="text-white font-bold mt-0.5">${wf.temperature_2m} °C <span class="text-[11px] text-slate-400 font-normal">(${wf.dew_point !== undefined ? wf.dew_point : '--'}°C)</span></div>
         </div>
         <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
-          <div class="text-slate-400">Humedad / Presión</div>
-          <div class="text-white font-bold mt-0.5">${wf.relative_humidity_2m}% • ${wf.surface_pressure} hPa</div>
+          <div class="text-slate-400">Densidad Aire (ρ)</div>
+          <div class="text-emerald-400 font-bold mt-0.5 font-mono">${wf.air_density ? wf.air_density + ' kg/m³' : '1.225 kg/m³'}</div>
+        </div>
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Humedad & Estática</div>
+          <div class="text-white font-bold mt-0.5">${wf.relative_humidity_2m}% <span class="text-[11px] font-normal ${wf.static_risk ? 'text-amber-400' : 'text-emerald-400'}">${wf.static_risk ? '⚡ Riesgo Alto' : '✓ Normal'}</span></div>
+        </div>
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Presión Atmosférica</div>
+          <div class="text-white font-bold mt-0.5">${wf.surface_pressure} hPa</div>
         </div>
         <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
           <div class="text-slate-400">Viento (10m)</div>

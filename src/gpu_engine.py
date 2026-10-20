@@ -80,22 +80,31 @@ def compute_crowd_bias_scores():
 def _compute_components_internal(sub, lottery, target_date, hyperparams):
     """
     Computes and returns the 5 probability component matrices + telemetry for a future target date.
+    Uses 34 physical, celestial, calendar, autoregressive, and Poisson delay features.
     """
-    alpha_prior = hyperparams.get('alpha_prior', 2.0)
-    renewal_temp = hyperparams.get('renewal_temp', 12.0)
-    markov_smooth = hyperparams.get('markov_smooth', 0.5)
+    alpha_prior = hyperparams.get('alpha_prior', 1.8)
+    renewal_temp = hyperparams.get('renewal_temp', 10.5)
+    markov_smooth = hyperparams.get('markov_smooth', 0.4)
+    decay_gamma = hyperparams.get('decay_gamma', 0.995)
 
     feature_cols = [
-        'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
+        # Physics & Aerodynamics
+        'air_density', 'dew_point', 'static_risk', 'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
+        # Celestial Ephemeris
         'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination',
+        # Calendar & Inspection Cycles
+        'day_of_week', 'day_of_month', 'is_monday', 'days_since_last_draw',
+        # Autoregressive Lags & Repetitions
         'lag_1', 'lag_2', 'lag_3', 'lag_7',
-        'lag_1_decena', 'lag_1_unidad',
+        'lag_1_decena', 'lag_1_unidad', 'lag_2_decena', 'lag_2_unidad',
+        'repeat_decena', 'repeat_unidad',
         'rolling_mean_3', 'rolling_mean_7', 'rolling_std_7',
-        'atraso_decena', 'atraso_unidad',
+        # Delays & Poisson Z-Scores
+        'atraso_decena', 'atraso_unidad', 'delay_zscore_decena', 'delay_zscore_unidad',
         'max_atraso_decena_pool', 'max_atraso_unidad_pool'
     ]
     physics_cols = [
-        'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
+        'air_density', 'dew_point', 'static_risk', 'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
         'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination'
     ]
 
@@ -108,7 +117,32 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
     weather_fc = enrich_features.fetch_weather_forecast(lottery, target_date)
     lunar_fc = enrich_features.compute_lunar_features(target_date, hour_art=21)
 
+    # Physical atmosphere calculations if missing
+    T = weather_fc.get('temperature_2m', 18.0)
+    RH = weather_fc.get('relative_humidity_2m', 65.0)
+    P = weather_fc.get('surface_pressure', 1015.0)
+    if 'dew_point' not in weather_fc:
+        a, b = 17.27, 237.7
+        gamma = (a * T) / (b + T) + math.log(max(RH, 1.0) / 100.0)
+        weather_fc['dew_point'] = round((b * gamma) / (a - gamma), 2)
+    if 'air_density' not in weather_fc:
+        T_kelvin = T + 273.15
+        p_pascal = P * 100.0
+        p_sat = 610.78 * (10 ** ((7.5 * T) / (237.3 + T)))
+        p_vapor = (RH / 100.0) * p_sat
+        p_dry = p_pascal - p_vapor
+        weather_fc['air_density'] = round((p_dry / (287.05 * T_kelvin)) + (p_vapor / (461.495 * T_kelvin)), 4)
+    if 'static_risk' not in weather_fc:
+        weather_fc['static_risk'] = 1.0 if RH < 45.0 else 0.0
+
     last_row = sub.iloc[-1]
+    target_dt = datetime.date.fromisoformat(target_date)
+    last_draw_dt = datetime.date.fromisoformat(str(last_row['date']))
+    day_of_week = target_dt.weekday()
+    day_of_month = target_dt.day
+    is_monday = 1.0 if day_of_week == 0 else 0.0
+    days_since_last = max(1.0, float((target_dt - last_draw_dt).days))
+
     cur_atraso_dec = {d: 0 for d in range(10)}
     cur_atraso_uni = {u: 0 for u in range(10)}
     for d in range(10):
@@ -119,6 +153,9 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
         cur_atraso_uni[u] = n_samples - 1 - seen[-1] if len(seen) > 0 else n_samples
 
     x_target_dict = {
+        'air_density': weather_fc.get('air_density', 1.225),
+        'dew_point': weather_fc.get('dew_point', 12.0),
+        'static_risk': weather_fc.get('static_risk', 0.0),
         'temperature_2m': weather_fc.get('temperature_2m', 18.0),
         'relative_humidity_2m': weather_fc.get('relative_humidity_2m', 65.0),
         'surface_pressure': weather_fc.get('surface_pressure', 1015.0),
@@ -127,17 +164,27 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
         'lunar_sin': lunar_fc.get('lunar_sin', 0.0),
         'lunar_cos': lunar_fc.get('lunar_cos', 1.0),
         'lunar_illumination': lunar_fc.get('lunar_illumination', 50.0),
+        'day_of_week': float(day_of_week),
+        'day_of_month': float(day_of_month),
+        'is_monday': float(is_monday),
+        'days_since_last_draw': float(days_since_last),
         'lag_1': float(last_row['number_2d']),
         'lag_2': float(sub['number_2d'].iloc[-2]) if n_samples > 1 else float(last_row['number_2d']),
         'lag_3': float(sub['number_2d'].iloc[-3]) if n_samples > 2 else float(last_row['number_2d']),
         'lag_7': float(sub['number_2d'].iloc[-7]) if n_samples > 6 else float(last_row['number_2d']),
         'lag_1_decena': float(last_row['decena']),
         'lag_1_unidad': float(last_row['unidad']),
+        'lag_2_decena': float(sub['decena'].iloc[-2]) if n_samples > 1 else float(last_row['decena']),
+        'lag_2_unidad': float(sub['unidad'].iloc[-2]) if n_samples > 1 else float(last_row['unidad']),
+        'repeat_decena': 1.0 if n_samples > 1 and last_row['decena'] == sub['decena'].iloc[-2] else 0.0,
+        'repeat_unidad': 1.0 if n_samples > 1 and last_row['unidad'] == sub['unidad'].iloc[-2] else 0.0,
         'rolling_mean_3': float(np.mean(sub['number_2d'].values[-3:])),
         'rolling_mean_7': float(np.mean(sub['number_2d'].values[-7:])),
         'rolling_std_7': float(np.std(sub['number_2d'].values[-7:])) if n_samples >= 7 else 0.0,
         'atraso_decena': float(cur_atraso_dec[int(last_row['decena'])]),
         'atraso_unidad': float(cur_atraso_uni[int(last_row['unidad'])]),
+        'delay_zscore_decena': (float(cur_atraso_dec[int(last_row['decena'])]) - 10.0) / 9.487,
+        'delay_zscore_unidad': (float(cur_atraso_uni[int(last_row['unidad'])]) - 10.0) / 9.487,
         'max_atraso_decena_pool': float(max(cur_atraso_dec.values())),
         'max_atraso_unidad_pool': float(max(cur_atraso_uni.values())),
     }
@@ -154,19 +201,19 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
             out[int(c)] = prob
         return out
 
-    # --- PILLAR 1: Tree Ensemble (RF + HistGB) ---
-    rf_d = RandomForestClassifier(n_estimators=80, max_depth=4, random_state=42, n_jobs=1).fit(X, y_dec)
-    rf_u = RandomForestClassifier(n_estimators=80, max_depth=4, random_state=42, n_jobs=1).fit(X, y_uni)
-    hgb_d = HistGradientBoostingClassifier(max_iter=60, max_depth=3, random_state=42).fit(X, y_dec)
-    hgb_u = HistGradientBoostingClassifier(max_iter=60, max_depth=3, random_state=42).fit(X, y_uni)
+    # --- PILLAR 1: Tree Ensemble (RF + HistGB with 34 features) ---
+    rf_d = RandomForestClassifier(n_estimators=70, max_depth=4, random_state=42, n_jobs=1).fit(X, y_dec)
+    rf_u = RandomForestClassifier(n_estimators=70, max_depth=4, random_state=42, n_jobs=1).fit(X, y_uni)
+    hgb_d = HistGradientBoostingClassifier(max_iter=50, max_depth=3, random_state=42).fit(X, y_dec)
+    hgb_u = HistGradientBoostingClassifier(max_iter=50, max_depth=3, random_state=42).fit(X, y_uni)
 
     p_tree_d = 0.5 * (full_prob(rf_d, x_target_df) + full_prob(hgb_d, x_target_df))
     p_tree_u = 0.5 * (full_prob(rf_u, x_target_df) + full_prob(hgb_u, x_target_df))
     m_tree = np.outer(p_tree_d, p_tree_u)
 
-    # --- PILLAR 2: Deep MLP Ensemble ---
-    mlp_d = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=250, alpha=0.05, random_state=42).fit(X_scaled, y_dec)
-    mlp_u = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=250, alpha=0.05, random_state=42).fit(X_scaled, y_uni)
+    # --- PILLAR 2: Deep MLP Ensemble (Early Stopping, Regularized) ---
+    mlp_d = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=300, alpha=0.1, early_stopping=True, n_iter_no_change=15, random_state=42).fit(X_scaled, y_dec)
+    mlp_u = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=300, alpha=0.1, early_stopping=True, n_iter_no_change=15, random_state=42).fit(X_scaled, y_uni)
     p_deep_d = full_prob(mlp_d, x_target_scaled)
     p_deep_u = full_prob(mlp_u, x_target_scaled)
     m_deep = np.outer(p_deep_d, p_deep_u)
@@ -177,31 +224,54 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
     x_phys = pd.DataFrame([x_target_dict])[physics_cols].fillna(0).values
     m_phys = np.outer(full_prob(rf_phys_d, x_phys), full_prob(rf_phys_u, x_phys))
 
-    # --- PILLAR 3: 1st-Order Markov Transition ---
-    trans_d = np.ones((10, 10)) * markov_smooth
-    trans_u = np.ones((10, 10)) * markov_smooth
+    # --- PILLAR 3: 2nd-Order + 1st-Order Markov Transitions ---
+    trans_1st_d = np.ones((10, 10)) * markov_smooth
+    trans_1st_u = np.ones((10, 10)) * markov_smooth
     for i in range(len(y_dec) - 1):
-        trans_d[y_dec[i], y_dec[i + 1]] += 1.0
-        trans_u[y_uni[i], y_uni[i + 1]] += 1.0
-    trans_d /= trans_d.sum(axis=1, keepdims=True)
-    trans_u /= trans_u.sum(axis=1, keepdims=True)
+        trans_1st_d[y_dec[i], y_dec[i + 1]] += 1.0
+        trans_1st_u[y_uni[i], y_uni[i + 1]] += 1.0
+    trans_1st_d /= trans_1st_d.sum(axis=1, keepdims=True)
+    trans_1st_u /= trans_1st_u.sum(axis=1, keepdims=True)
 
-    last_d = int(y_dec[-1])
-    last_u = int(y_uni[-1])
-    m_markov = np.outer(trans_d[last_d], trans_u[last_u])
+    p_markov_d = trans_1st_d[int(y_dec[-1])]
+    p_markov_u = trans_1st_u[int(y_uni[-1])]
 
-    # --- PILLAR 4: Bayesian Dirichlet-Multinomial ---
-    c_dec = np.bincount(y_dec, minlength=10).astype(float)
-    c_uni = np.bincount(y_uni, minlength=10).astype(float)
-    c_2d = np.bincount(sub['number_2d'].astype(int).values, minlength=100).astype(float)
+    if len(y_dec) > 2:
+        prev2_d, prev1_d = int(y_dec[-2]), int(y_dec[-1])
+        prev2_u, prev1_u = int(y_uni[-2]), int(y_uni[-1])
+        c_2nd_d = np.ones(10) * (markov_smooth * 0.5)
+        c_2nd_u = np.ones(10) * (markov_smooth * 0.5)
+        for i in range(len(y_dec) - 2):
+            if y_dec[i] == prev2_d and y_dec[i + 1] == prev1_d:
+                c_2nd_d[y_dec[i + 2]] += 1.5
+            if y_uni[i] == prev2_u and y_uni[i + 1] == prev1_u:
+                c_2nd_u[y_uni[i + 2]] += 1.5
+        c_2nd_d /= c_2nd_d.sum()
+        c_2nd_u /= c_2nd_u.sum()
+        p_markov_d = 0.70 * p_markov_d + 0.30 * c_2nd_d
+        p_markov_u = 0.70 * p_markov_u + 0.30 * c_2nd_u
+
+    m_markov = np.outer(p_markov_d, p_markov_u)
+
+    # --- PILLAR 4: Recency-Weighted Dirichlet-Multinomial ---
+    weights_time = decay_gamma ** np.arange(n_samples - 1, -1, -1)
+    c_dec = np.zeros(10)
+    c_uni = np.zeros(10)
+    c_2d = np.zeros(100)
+    nums_2d = sub['number_2d'].astype(int).values
+    for i in range(n_samples):
+        w_i = weights_time[i]
+        c_dec[y_dec[i]] += w_i
+        c_uni[y_uni[i]] += w_i
+        c_2d[nums_2d[i]] += w_i
 
     p_hot_d = (c_dec + alpha_prior) / (c_dec.sum() + 10.0 * alpha_prior)
     p_hot_u = (c_uni + alpha_prior) / (c_uni.sum() + 10.0 * alpha_prior)
-    p_hot_2d = (c_2d + 0.2) / (c_2d.sum() + 20.0)
-    m_hot = 0.65 * np.outer(p_hot_d, p_hot_u) + 0.35 * p_hot_2d.reshape(10, 10)
+    p_hot_2d = (c_2d + 0.15) / (c_2d.sum() + 15.0)
+    m_hot = 0.60 * np.outer(p_hot_d, p_hot_u) + 0.40 * p_hot_2d.reshape(10, 10)
     m_hot /= m_hot.sum()
 
-    # --- PILLAR 5: Renewal Cold / Delay Softmax Hazard ---
+    # --- PILLAR 5: Renewal Cold / Weibull Softmax Hazard ---
     delay_d_arr = np.array([cur_atraso_dec[d] for d in range(10)], dtype=float)
     delay_u_arr = np.array([cur_atraso_uni[u] for u in range(10)], dtype=float)
     p_cold_d = np.exp(delay_d_arr / renewal_temp)
