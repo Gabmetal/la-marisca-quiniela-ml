@@ -355,11 +355,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       try {
         const response = await fetch('/api/sync', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days_back: 14}) });
         const data = await response.json();
-        btn.textContent = `✓ Sincronizado (+${data.added})`;
-        setTimeout(() => { btn.textContent = '🔄 Sincronizar Web'; }, 3000);
-        runPrediction();
+        if (data.status === 'ok') {
+          btn.textContent = `✓ Sincronizado (+${data.added})`;
+          setTimeout(() => { btn.textContent = '🔄 Sincronizar Web'; }, 3000);
+          await runPrediction();
+        } else {
+          btn.textContent = '⚠️ Error Sync';
+          setTimeout(() => { btn.textContent = '🔄 Sincronizar Web'; }, 3000);
+        }
       } catch (e) {
+        console.error("Sync error:", e);
         btn.textContent = '⚠️ Error Sync';
+        setTimeout(() => { btn.textContent = '🔄 Sincronizar Web'; }, 3000);
       }
     }
 

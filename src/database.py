@@ -48,6 +48,9 @@ class QuinielaDatabase:
                     relative_humidity_2m REAL,
                     surface_pressure REAL,
                     wind_speed_10m REAL,
+                    air_density REAL,
+                    dew_point REAL,
+                    static_risk REAL,
                     lunar_phase REAL,
                     lunar_sin REAL,
                     lunar_cos REAL,
@@ -73,6 +76,11 @@ class QuinielaDatabase:
                     UNIQUE(target_date, lottery)
                 )
             """)
+            # Auto-migrate columns if table already existed without them
+            existing_cols = [r[1] for r in conn.execute("PRAGMA table_info(draws)").fetchall()]
+            for col, col_type in [('air_density', 'REAL'), ('dew_point', 'REAL'), ('static_risk', 'REAL')]:
+                if col not in existing_cols:
+                    conn.execute(f"ALTER TABLE draws ADD COLUMN {col} {col_type}")
             conn.commit()
 
     def _bootstrap_from_csv_if_needed(self):
@@ -128,15 +136,24 @@ class QuinielaDatabase:
         except Exception:
             w = {'temperature_2m': 18.0, 'relative_humidity_2m': 60.0, 'surface_pressure': 1014.0, 'wind_speed_10m': 12.0}
 
+        t_val = float(w.get('temperature_2m', 18.0))
+        h_val = float(w.get('relative_humidity_2m', 60.0))
+        p_val = float(w.get('surface_pressure', 1014.0))
+        w_val = float(w.get('wind_speed_10m', 12.0))
+        air_rho = enrich_features.compute_air_density(t_val, p_val, h_val)
+        dew_pt = enrich_features.compute_dew_point(t_val, h_val)
+        st_risk = enrich_features.compute_static_risk(h_val)
+
         now_iso = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT INTO draws (
                     date, lottery, number_4d, number_2d, decena, unidad,
                     temperature_2m, relative_humidity_2m, surface_pressure, wind_speed_10m,
+                    air_density, dew_point, static_risk,
                     lunar_phase, lunar_sin, lunar_cos, lunar_illumination, lunar_phase_name,
                     source, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(date, lottery) DO UPDATE SET
                     number_4d=excluded.number_4d,
                     number_2d=excluded.number_2d,
@@ -146,14 +163,15 @@ class QuinielaDatabase:
                     relative_humidity_2m=excluded.relative_humidity_2m,
                     surface_pressure=excluded.surface_pressure,
                     wind_speed_10m=excluded.wind_speed_10m,
+                    air_density=excluded.air_density,
+                    dew_point=excluded.dew_point,
+                    static_risk=excluded.static_risk,
                     source=excluded.source,
                     updated_at=excluded.updated_at
             """, (
                 date_str, lottery, num_str, n2, dec, uni,
-                float(w.get('temperature_2m', 18.0)),
-                float(w.get('relative_humidity_2m', 60.0)),
-                float(w.get('surface_pressure', 1014.0)),
-                float(w.get('wind_speed_10m', 12.0)),
+                t_val, h_val, p_val, w_val,
+                air_rho, dew_pt, st_risk,
                 lunar['lunar_phase'], lunar['lunar_sin'], lunar['lunar_cos'],
                 lunar['lunar_illumination'], lunar['lunar_phase_name'],
                 source, now_iso
@@ -215,7 +233,7 @@ class QuinielaDatabase:
             conn.commit()
 
     def rebuild_enriched_dataset(self):
-        """Recomputes all autoregressive lags, rolling stats, and atrasos from the SQLite table."""
+        """Recomputes all autoregressive lags, rolling stats, delay Z-scores, and physical parameters."""
         with self._get_conn() as conn:
             df_db = pd.read_sql_query("SELECT * FROM draws ORDER BY lottery, date ASC", conn)
 
@@ -228,25 +246,61 @@ class QuinielaDatabase:
         df_raw['number_4d'] = df_raw['number_4d'].apply(lambda x: f"{int(x):04d}")
         df_raw.to_csv(self.raw_csv_path, index=False)
 
-        # Compute autoregressive features for Ciudad while preserving SQLite weather/lunar columns
         enriched_parts = []
         for lot in ['ciudad']:
-            sub = df_db[df_db['lottery'] == lot].copy()
+            sub = df_db[df_db['lottery'] == lot].copy().reset_index(drop=True)
             if sub.empty:
                 continue
-            weather_cols = [
-                'date', 'temperature_2m', 'relative_humidity_2m', 'surface_pressure',
-                'wind_speed_10m', 'lunar_phase', 'lunar_sin', 'lunar_cos',
-                'lunar_illumination', 'lunar_phase_name'
-            ]
-            w_df = sub[weather_cols].copy()
+
             auto_df = enrich_features.compute_autoregressive_features(sub[raw_cols])
-            merged = pd.merge(auto_df, w_df, on='date', how='left')
-            merged['temperature_2m'] = merged['temperature_2m'].bfill().ffill()
-            merged['relative_humidity_2m'] = merged['relative_humidity_2m'].bfill().ffill()
-            merged['surface_pressure'] = merged['surface_pressure'].bfill().ffill()
-            merged['wind_speed_10m'] = merged['wind_speed_10m'].bfill().ffill()
-            enriched_parts.append(merged)
+
+            # Weather & Physical telemetry
+            temps, hums, press, winds = [], [], [], []
+            densities, dew_points, static_risks = [], [], []
+            l_phase, l_sin, l_cos, l_illum, l_names = [], [], [], [], []
+
+            for _, row in sub.iterrows():
+                t = float(row['temperature_2m']) if pd.notnull(row.get('temperature_2m')) else 18.0
+                h = float(row['relative_humidity_2m']) if pd.notnull(row.get('relative_humidity_2m')) else 65.0
+                p = float(row['surface_pressure']) if pd.notnull(row.get('surface_pressure')) else 1015.0
+                w = float(row['wind_speed_10m']) if pd.notnull(row.get('wind_speed_10m')) else 12.0
+
+                rho = float(row['air_density']) if pd.notnull(row.get('air_density')) else enrich_features.compute_air_density(t, p, h)
+                dew = float(row['dew_point']) if pd.notnull(row.get('dew_point')) else enrich_features.compute_dew_point(t, h)
+                st = float(row['static_risk']) if pd.notnull(row.get('static_risk')) else enrich_features.compute_static_risk(h)
+
+                temps.append(t)
+                hums.append(h)
+                press.append(p)
+                winds.append(w)
+                densities.append(rho)
+                dew_points.append(dew)
+                static_risks.append(st)
+
+                l_phase.append(float(row.get('lunar_phase', 0.0)))
+                l_sin.append(float(row.get('lunar_sin', 0.0)))
+                l_cos.append(float(row.get('lunar_cos', 1.0)))
+                l_illum.append(float(row.get('lunar_illumination', 50.0)))
+                l_names.append(str(row.get('lunar_phase_name', 'N/A')))
+
+            auto_df['temperature_2m'] = temps
+            auto_df['relative_humidity_2m'] = hums
+            auto_df['surface_pressure'] = press
+            auto_df['wind_speed_10m'] = winds
+            auto_df['air_density'] = densities
+            auto_df['dew_point'] = dew_points
+            auto_df['static_risk'] = static_risks
+            auto_df['lunar_phase'] = l_phase
+            auto_df['lunar_sin'] = l_sin
+            auto_df['lunar_cos'] = l_cos
+            auto_df['lunar_illumination'] = l_illum
+            auto_df['lunar_phase_name'] = l_names
+
+            # Forward-fill and backward-fill any rare missing values
+            for col_fill in ['temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m', 'air_density', 'dew_point', 'static_risk']:
+                auto_df[col_fill] = auto_df[col_fill].bfill().ffill()
+
+            enriched_parts.append(auto_df)
 
         df_all = pd.concat(enriched_parts, ignore_index=True)
         df_all.to_csv(self.enriched_csv_path, index=False)

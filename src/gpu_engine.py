@@ -108,10 +108,52 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
         'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination'
     ]
 
-    X = sub[feature_cols].fillna(0).values
+    n_samples = len(sub)
+    sub_features = sub.copy()
+
+    # Defensive guarantee: Ensure all feature_cols exist in dataframe without KeyError
+    for c in feature_cols:
+        if c not in sub_features.columns:
+            if c == 'air_density':
+                sub_features['air_density'] = [
+                    enrich_features.compute_air_density(t, p, h)
+                    for t, p, h in zip(
+                        sub_features.get('temperature_2m', [18.0] * n_samples),
+                        sub_features.get('surface_pressure', [1015.0] * n_samples),
+                        sub_features.get('relative_humidity_2m', [65.0] * n_samples)
+                    )
+                ]
+            elif c == 'dew_point':
+                sub_features['dew_point'] = [
+                    enrich_features.compute_dew_point(t, h)
+                    for t, h in zip(
+                        sub_features.get('temperature_2m', [18.0] * n_samples),
+                        sub_features.get('relative_humidity_2m', [65.0] * n_samples)
+                    )
+                ]
+            elif c == 'static_risk':
+                sub_features['static_risk'] = [
+                    enrich_features.compute_static_risk(h)
+                    for h in sub_features.get('relative_humidity_2m', [65.0] * n_samples)
+                ]
+            elif c == 'is_monday':
+                sub_features['is_monday'] = (pd.to_datetime(sub_features['date']).dt.dayofweek == 0).astype(float)
+            elif c == 'days_since_last_draw':
+                sub_features['days_since_last_draw'] = 1.0
+            elif c == 'day_of_week':
+                sub_features['day_of_week'] = pd.to_datetime(sub_features['date']).dt.dayofweek.astype(float)
+            elif c == 'day_of_month':
+                sub_features['day_of_month'] = pd.to_datetime(sub_features['date']).dt.day.astype(float)
+            elif c == 'delay_zscore_decena':
+                sub_features[c] = (sub_features.get('atraso_decena', 10.0) - 10.0) / 9.487
+            elif c == 'delay_zscore_unidad':
+                sub_features[c] = (sub_features.get('atraso_unidad', 10.0) - 10.0) / 9.487
+            else:
+                sub_features[c] = 0.0
+
+    X = sub_features[feature_cols].fillna(0).values
     y_dec = sub['decena'].astype(int).values
     y_uni = sub['unidad'].astype(int).values
-    n_samples = len(sub)
 
     # Weather forecast & Lunar calculation for target future date
     weather_fc = enrich_features.fetch_weather_forecast(lottery, target_date)
@@ -219,8 +261,8 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
     m_deep = np.outer(p_deep_d, p_deep_u)
 
     # Physics-only
-    rf_phys_d = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(sub[physics_cols].fillna(0).values, y_dec)
-    rf_phys_u = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(sub[physics_cols].fillna(0).values, y_uni)
+    rf_phys_d = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(sub_features[physics_cols].fillna(0).values, y_dec)
+    rf_phys_u = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(sub_features[physics_cols].fillna(0).values, y_uni)
     x_phys = pd.DataFrame([x_target_dict])[physics_cols].fillna(0).values
     m_phys = np.outer(full_prob(rf_phys_d, x_phys), full_prob(rf_phys_u, x_phys))
 
