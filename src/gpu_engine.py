@@ -88,10 +88,15 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
     decay_gamma = hyperparams.get('decay_gamma', 0.995)
 
     feature_cols = [
-        # Physics & Aerodynamics
+        # Physics & Aerodynamics of pneumatic bolillero
         'air_density', 'dew_point', 'static_risk', 'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
-        # Celestial Ephemeris
+        'dynamic_viscosity', 'kinematic_viscosity', 'ball_buoyant_ratio',
+        # Celestial & Ephemeris & Gravitational Tides
         'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination',
+        'season_sin', 'season_cos', 'solar_declination',
+        'lunar_dist_ratio', 'grav_tidal_force', 'lunar_declination', 'composite_tide_index',
+        # Quantum / KAM Chaotic Resonance & Drum Entropy
+        'golden_sin', 'golden_cos', 'drum_entropy_10',
         # Calendar & Inspection Cycles
         'day_of_week', 'day_of_month', 'is_monday', 'days_since_last_draw',
         # Autoregressive Lags & Repetitions
@@ -105,7 +110,11 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
     ]
     physics_cols = [
         'air_density', 'dew_point', 'static_risk', 'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
-        'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination'
+        'dynamic_viscosity', 'kinematic_viscosity', 'ball_buoyant_ratio',
+        'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination',
+        'season_sin', 'season_cos', 'solar_declination',
+        'lunar_dist_ratio', 'grav_tidal_force', 'lunar_declination', 'composite_tide_index',
+        'golden_sin', 'golden_cos'
     ]
 
     n_samples = len(sub)
@@ -148,6 +157,12 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
                 sub_features[c] = (sub_features.get('atraso_decena', 10.0) - 10.0) / 9.487
             elif c == 'delay_zscore_unidad':
                 sub_features[c] = (sub_features.get('atraso_unidad', 10.0) - 10.0) / 9.487
+            elif c == 'drum_entropy_10':
+                sub_features[c] = 3.32
+            elif c in ['season_sin', 'season_cos', 'solar_declination', 'lunar_dist_ratio', 'grav_tidal_force', 'lunar_declination', 'composite_tide_index', 'golden_sin', 'golden_cos']:
+                sub_features[c] = 0.0
+            elif c in ['dynamic_viscosity', 'kinematic_viscosity', 'ball_buoyant_ratio']:
+                sub_features[c] = 1.0
             else:
                 sub_features[c] = 0.0
 
@@ -202,10 +217,23 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
         'relative_humidity_2m': weather_fc.get('relative_humidity_2m', 65.0),
         'surface_pressure': weather_fc.get('surface_pressure', 1015.0),
         'wind_speed_10m': weather_fc.get('wind_speed_10m', 12.0),
+        'dynamic_viscosity': weather_fc.get('dynamic_viscosity', 1.815),
+        'kinematic_viscosity': weather_fc.get('kinematic_viscosity', 1.481),
+        'ball_buoyant_ratio': weather_fc.get('ball_buoyant_ratio', 0.0152),
         'lunar_phase': lunar_fc.get('lunar_phase', 0.5),
         'lunar_sin': lunar_fc.get('lunar_sin', 0.0),
         'lunar_cos': lunar_fc.get('lunar_cos', 1.0),
         'lunar_illumination': lunar_fc.get('lunar_illumination', 50.0),
+        'season_sin': lunar_fc.get('season_sin', 0.0),
+        'season_cos': lunar_fc.get('season_cos', 1.0),
+        'solar_declination': lunar_fc.get('solar_declination', 0.0),
+        'lunar_dist_ratio': lunar_fc.get('lunar_dist_ratio', 1.0),
+        'grav_tidal_force': lunar_fc.get('grav_tidal_force', 1.0),
+        'lunar_declination': lunar_fc.get('lunar_declination', 0.0),
+        'composite_tide_index': lunar_fc.get('composite_tide_index', 1.0),
+        'golden_sin': lunar_fc.get('golden_sin', 0.0),
+        'golden_cos': lunar_fc.get('golden_cos', 1.0),
+        'drum_entropy_10': float(sub['drum_entropy_10'].iloc[-1]) if 'drum_entropy_10' in sub.columns else 3.32,
         'day_of_week': float(day_of_week),
         'day_of_month': float(day_of_month),
         'is_monday': float(is_monday),
@@ -540,7 +568,7 @@ class RaffleGPUPredictor:
         archetypes = [
             {'profile': 'Ensamble GBDT + RF', 'number': f'{p1_n:02d}', 'prob_pct': round(p1_p, 3), 'desc': 'Árboles de decisión desacoplados para Decena y Unidad'},
             {'profile': 'Deep MLP Ensemble', 'number': f'{p2_n:02d}', 'prob_pct': round(p2_p, 3), 'desc': 'Red neuronal con regularización y dropout'},
-            {'profile': 'Física & Efemérides Lunares', 'number': f'{p3_n:02d}', 'prob_pct': round(p3_p, 3), 'desc': f"{weather_fc['temperature_2m']}°C, {weather_fc['surface_pressure']} hPa, {lunar_fc['lunar_phase_name']} ({lunar_fc['lunar_illumination']}%)"},
+            {'profile': 'Física, Mareas & Efemérides', 'number': f'{p3_n:02d}', 'prob_pct': round(p3_p, 3), 'desc': f"{weather_fc.get('temperature_2m', 18)}°C, Marea: {lunar_fc.get('grav_tidal_force', 1.0):.2f}x, {lunar_fc.get('lunar_phase_name', 'Luna')} ({lunar_fc.get('lunar_illumination', 50)}%)"},
             {'profile': 'Inercia Bayesiana (Hot Streak)', 'number': f'{p4_n:02d}', 'prob_pct': round(p4_p, 3), 'desc': 'Conteo empírico Dirichlet-Multinomial'},
             {'profile': 'Reversión por Sequía (Atrasos)', 'number': f'{p5_n:02d}', 'prob_pct': round(p5_p, 3), 'desc': 'Hazard Rate por sequía acumulada'}
         ]

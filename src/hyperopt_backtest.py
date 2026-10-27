@@ -16,8 +16,13 @@ HYPERPARAMS_PATH = os.path.join(DATA_DIR, 'optimal_hyperparams.json')
 FEATURE_COLS = [
     # Physics & Aerodynamics of pneumatic bolillero
     'air_density', 'dew_point', 'static_risk', 'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
-    # Celestial & Ephemeris
+    'dynamic_viscosity', 'kinematic_viscosity', 'ball_buoyant_ratio',
+    # Celestial & Ephemeris & Gravitational Tides
     'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination',
+    'season_sin', 'season_cos', 'solar_declination',
+    'lunar_dist_ratio', 'grav_tidal_force', 'lunar_declination', 'composite_tide_index',
+    # Quantum / KAM Chaotic Resonance & Drum Entropy
+    'golden_sin', 'golden_cos', 'drum_entropy_10',
     # Calendar & Inspection cycles
     'day_of_week', 'day_of_month', 'is_monday', 'days_since_last_draw',
     # Autoregressive Lags & Repetitions
@@ -68,10 +73,23 @@ def compute_components(sub_train, last_train_row, target_weather, target_lunar, 
         'relative_humidity_2m': target_weather.get('relative_humidity_2m', 65.0),
         'surface_pressure': target_weather.get('surface_pressure', 1015.0),
         'wind_speed_10m': target_weather.get('wind_speed_10m', 12.0),
+        'dynamic_viscosity': target_weather.get('dynamic_viscosity', 1.815),
+        'kinematic_viscosity': target_weather.get('kinematic_viscosity', 1.481),
+        'ball_buoyant_ratio': target_weather.get('ball_buoyant_ratio', 0.0152),
         'lunar_phase': target_lunar.get('lunar_phase', 0.5),
         'lunar_sin': target_lunar.get('lunar_sin', 0.0),
         'lunar_cos': target_lunar.get('lunar_cos', 1.0),
         'lunar_illumination': target_lunar.get('lunar_illumination', 50.0),
+        'season_sin': target_lunar.get('season_sin', 0.0),
+        'season_cos': target_lunar.get('season_cos', 1.0),
+        'solar_declination': target_lunar.get('solar_declination', 0.0),
+        'lunar_dist_ratio': target_lunar.get('lunar_dist_ratio', 1.0),
+        'grav_tidal_force': target_lunar.get('grav_tidal_force', 1.0),
+        'lunar_declination': target_lunar.get('lunar_declination', 0.0),
+        'composite_tide_index': target_lunar.get('composite_tide_index', 1.0),
+        'golden_sin': target_lunar.get('golden_sin', 0.0),
+        'golden_cos': target_lunar.get('golden_cos', 1.0),
+        'drum_entropy_10': target_calendar.get('drum_entropy_10', 3.32),
         'day_of_week': target_calendar.get('day_of_week', 2),
         'day_of_month': target_calendar.get('day_of_month', 15),
         'is_monday': target_calendar.get('is_monday', 0),
@@ -231,25 +249,38 @@ def walk_forward_backtest(df, weights=None, params=None, start_fold=75, step=3):
         last_train = sub_train.iloc[-1]
 
         target_weather = {
-            'air_density': test_row.get('air_density', 1.225),
-            'dew_point': test_row.get('dew_point', 12.0),
-            'static_risk': test_row.get('static_risk', 0.0),
-            'temperature_2m': test_row.get('temperature_2m', 18.0),
-            'relative_humidity_2m': test_row.get('relative_humidity_2m', 65.0),
-            'surface_pressure': test_row.get('surface_pressure', 1015.0),
-            'wind_speed_10m': test_row.get('wind_speed_10m', 12.0)
+            'air_density': float(test_row.get('air_density', 1.225)),
+            'dew_point': float(test_row.get('dew_point', 12.0)),
+            'static_risk': float(test_row.get('static_risk', 0.0)),
+            'temperature_2m': float(test_row.get('temperature_2m', 18.0)),
+            'relative_humidity_2m': float(test_row.get('relative_humidity_2m', 65.0)),
+            'surface_pressure': float(test_row.get('surface_pressure', 1015.0)),
+            'wind_speed_10m': float(test_row.get('wind_speed_10m', 12.0)),
+            'dynamic_viscosity': float(test_row.get('dynamic_viscosity', 1.815)),
+            'kinematic_viscosity': float(test_row.get('kinematic_viscosity', 1.481)),
+            'ball_buoyant_ratio': float(test_row.get('ball_buoyant_ratio', 0.0152)),
         }
         target_lunar = {
-            'lunar_phase': test_row.get('lunar_phase', 0.5),
-            'lunar_sin': test_row.get('lunar_sin', 0.0),
-            'lunar_cos': test_row.get('lunar_cos', 1.0),
-            'lunar_illumination': test_row.get('lunar_illumination', 50.0)
+            'lunar_phase': float(test_row.get('lunar_phase', 0.5)),
+            'lunar_sin': float(test_row.get('lunar_sin', 0.0)),
+            'lunar_cos': float(test_row.get('lunar_cos', 1.0)),
+            'lunar_illumination': float(test_row.get('lunar_illumination', 50.0)),
+            'season_sin': float(test_row.get('season_sin', 0.0)),
+            'season_cos': float(test_row.get('season_cos', 1.0)),
+            'solar_declination': float(test_row.get('solar_declination', 0.0)),
+            'lunar_dist_ratio': float(test_row.get('lunar_dist_ratio', 1.0)),
+            'grav_tidal_force': float(test_row.get('grav_tidal_force', 1.0)),
+            'lunar_declination': float(test_row.get('lunar_declination', 0.0)),
+            'composite_tide_index': float(test_row.get('composite_tide_index', 1.0)),
+            'golden_sin': float(test_row.get('golden_sin', 0.0)),
+            'golden_cos': float(test_row.get('golden_cos', 1.0)),
         }
         target_calendar = {
             'day_of_week': int(test_row.get('day_of_week', 2)),
             'day_of_month': int(test_row.get('day_of_month', 15)),
             'is_monday': int(test_row.get('is_monday', 0)),
-            'days_since_last_draw': int(test_row.get('days_since_last_draw', 1))
+            'days_since_last_draw': int(test_row.get('days_since_last_draw', 1)),
+            'drum_entropy_10': float(test_row.get('drum_entropy_10', 3.32)),
         }
 
         comps = compute_components(sub_train, last_train, target_weather, target_lunar, target_calendar, params)
@@ -322,8 +353,8 @@ def optimize_hyperparameters(csv_path=None, lottery='ciudad'):
 
     print(f"[HYPEROPT] Running Walk-Forward Optimization over {len(sub)} draws with 47 features...")
 
-    eval_step = 3
-    start_fold = 75
+    eval_step = 6
+    start_fold = 150
     folds = list(range(start_fold, len(sub), eval_step))
 
     default_params = {'alpha_prior': 1.8, 'renewal_temp': 10.5, 'markov_smooth': 0.4, 'decay_gamma': 0.995}
@@ -336,25 +367,38 @@ def optimize_hyperparameters(csv_path=None, lottery='ciudad'):
         last_train = sub_train.iloc[-1]
 
         target_weather = {
-            'air_density': test_row.get('air_density', 1.225),
-            'dew_point': test_row.get('dew_point', 12.0),
-            'static_risk': test_row.get('static_risk', 0.0),
-            'temperature_2m': test_row.get('temperature_2m', 18.0),
-            'relative_humidity_2m': test_row.get('relative_humidity_2m', 65.0),
-            'surface_pressure': test_row.get('surface_pressure', 1015.0),
-            'wind_speed_10m': test_row.get('wind_speed_10m', 12.0)
+            'air_density': float(test_row.get('air_density', 1.225)),
+            'dew_point': float(test_row.get('dew_point', 12.0)),
+            'static_risk': float(test_row.get('static_risk', 0.0)),
+            'temperature_2m': float(test_row.get('temperature_2m', 18.0)),
+            'relative_humidity_2m': float(test_row.get('relative_humidity_2m', 65.0)),
+            'surface_pressure': float(test_row.get('surface_pressure', 1015.0)),
+            'wind_speed_10m': float(test_row.get('wind_speed_10m', 12.0)),
+            'dynamic_viscosity': float(test_row.get('dynamic_viscosity', 1.815)),
+            'kinematic_viscosity': float(test_row.get('kinematic_viscosity', 1.481)),
+            'ball_buoyant_ratio': float(test_row.get('ball_buoyant_ratio', 0.0152)),
         }
         target_lunar = {
-            'lunar_phase': test_row.get('lunar_phase', 0.5),
-            'lunar_sin': test_row.get('lunar_sin', 0.0),
-            'lunar_cos': test_row.get('lunar_cos', 1.0),
-            'lunar_illumination': test_row.get('lunar_illumination', 50.0)
+            'lunar_phase': float(test_row.get('lunar_phase', 0.5)),
+            'lunar_sin': float(test_row.get('lunar_sin', 0.0)),
+            'lunar_cos': float(test_row.get('lunar_cos', 1.0)),
+            'lunar_illumination': float(test_row.get('lunar_illumination', 50.0)),
+            'season_sin': float(test_row.get('season_sin', 0.0)),
+            'season_cos': float(test_row.get('season_cos', 1.0)),
+            'solar_declination': float(test_row.get('solar_declination', 0.0)),
+            'lunar_dist_ratio': float(test_row.get('lunar_dist_ratio', 1.0)),
+            'grav_tidal_force': float(test_row.get('grav_tidal_force', 1.0)),
+            'lunar_declination': float(test_row.get('lunar_declination', 0.0)),
+            'composite_tide_index': float(test_row.get('composite_tide_index', 1.0)),
+            'golden_sin': float(test_row.get('golden_sin', 0.0)),
+            'golden_cos': float(test_row.get('golden_cos', 1.0)),
         }
         target_calendar = {
             'day_of_week': int(test_row.get('day_of_week', 2)),
             'day_of_month': int(test_row.get('day_of_month', 15)),
             'is_monday': int(test_row.get('is_monday', 0)),
-            'days_since_last_draw': int(test_row.get('days_since_last_draw', 1))
+            'days_since_last_draw': int(test_row.get('days_since_last_draw', 1)),
+            'drum_entropy_10': float(test_row.get('drum_entropy_10', 3.32)),
         }
 
         comps = compute_components(sub_train, last_train, target_weather, target_lunar, target_calendar, default_params)

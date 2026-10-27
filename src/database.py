@@ -91,6 +91,17 @@ class QuinielaDatabase:
                 if col not in existing_cols:
                     conn.execute(f"ALTER TABLE draws ADD COLUMN {col} {col_type}")
 
+            new_draw_cols = [
+                ('dynamic_viscosity', 'REAL'), ('kinematic_viscosity', 'REAL'), ('ball_buoyant_ratio', 'REAL'),
+                ('season_sin', 'REAL'), ('season_cos', 'REAL'), ('solar_declination', 'REAL'),
+                ('lunar_dist_ratio', 'REAL'), ('grav_tidal_force', 'REAL'), ('lunar_declination', 'REAL'),
+                ('composite_tide_index', 'REAL'), ('golden_sin', 'REAL'), ('golden_cos', 'REAL'),
+                ('drum_entropy_10', 'REAL')
+            ]
+            for col, col_type in new_draw_cols:
+                if col not in existing_cols:
+                    conn.execute(f"ALTER TABLE draws ADD COLUMN {col} {col_type}")
+
             existing_pred_cols = [r[1] for r in conn.execute("PRAGMA table_info(predictions_log)").fetchall()]
             pred_cols_to_add = [
                 ('ticket_count', 'INTEGER DEFAULT 5'),

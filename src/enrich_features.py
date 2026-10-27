@@ -56,9 +56,115 @@ def compute_static_risk(rh_pct):
         return 0.0
 
 
+def compute_viscosity_and_buoyancy(temp_c, pressure_hpa, rh_pct):
+    """
+    Computes aerodynamic dynamic viscosity (mu), kinematic viscosity (nu),
+    and ball buoyant lift fraction for 40mm celluloid lottery balls.
+    """
+    try:
+        t_c = float(temp_c)
+        p_hpa = float(pressure_hpa)
+        rh = float(rh_pct)
+        T_k = t_c + 273.15
+        # Sutherland equation for dynamic viscosity of air (10^-5 Pa*s)
+        mu = 1.716e-5 * ((T_k / 273.15) ** 1.5) * (383.55 / (T_k + 110.4))
+        mu_scaled = mu * 1e5  # in 10^-5 Pa*s (~1.80)
+
+        rho = compute_air_density(t_c, p_hpa, rh)
+        nu_scaled = (mu / max(rho, 0.5)) * 1e5  # kinematic viscosity in 10^-5 m2/s
+
+        # Ball buoyant fraction: (rho * V_ball) / m_ball
+        # V = 4/3 * pi * (0.02)^3 = 3.351e-5 m3. m = 0.0027 kg (2.7g)
+        # B = rho * (3.351e-5 / 0.0027) = rho * 0.01241
+        buoyant_ratio = round(rho * 0.01241, 5)
+
+        return {
+            'dynamic_viscosity': round(float(mu_scaled), 4),
+            'kinematic_viscosity': round(float(nu_scaled), 4),
+            'ball_buoyant_ratio': float(buoyant_ratio)
+        }
+    except Exception:
+        return {
+            'dynamic_viscosity': 1.815,
+            'kinematic_viscosity': 1.481,
+            'ball_buoyant_ratio': 0.0152
+        }
+
+
+def compute_quantum_celestial_features(date_str, hour_art=21):
+    """
+    Computes exogenous astronomical seasons, gravitational tidal acceleration,
+    Earth-Moon Keplerian distance, lunar declination, syzygy amplification,
+    and Golden Ratio KAM quasi-periodic phase resonance.
+    """
+    try:
+        if isinstance(date_str, str):
+            dt_obj = datetime.date.fromisoformat(date_str)
+        else:
+            dt_obj = date_str
+
+        d_day = dt_obj.timetuple().tm_yday
+
+        # 1. Solar Season Harmonics (Equinoxes & Solstices)
+        season_angle = 2.0 * math.pi * (d_day - 80) / 365.25
+        season_sin = math.sin(season_angle)
+        season_cos = math.cos(season_angle)
+        solar_declination = -23.44 * math.cos(2.0 * math.pi * (d_day + 10) / 365.25)
+
+        # 2. Gravitational Tides & Lunar Keplerian Anomalistic Cycle (~27.55455 days)
+        ref_epoch = datetime.date(2024, 1, 1)
+        days_since_ref = (dt_obj - ref_epoch).days
+        anomalistic_mean = (days_since_ref / 27.55455) * 2.0 * math.pi
+
+        # Earth-Moon distance ratio r / a
+        lunar_dist_ratio = 1.0 - 0.0549 * math.cos(anomalistic_mean)
+        # Differential tidal gravitational acceleration factor ~ 1 / r^3
+        grav_tidal_force = (1.0 / max(lunar_dist_ratio, 0.5)) ** 3
+
+        # Lunar declination cycle (~27.32158 days)
+        nodal_mean = (days_since_ref / 27.32158) * 2.0 * math.pi
+        lunar_declination = 28.5 * math.sin(nodal_mean)
+
+        # Spring/Neap tide factor (Syzygy: max at New & Full Moon)
+        synodic_phase = ((days_since_ref - 11.0) / 29.530588) % 1.0
+        syzygy_factor = math.cos(4.0 * math.pi * synodic_phase)
+        composite_tide_index = grav_tidal_force * (1.0 + 0.35 * syzygy_factor)
+
+        # 3. Golden Ratio Quasi-Periodic Ergodic Phase (KAM Chaotic Billiard Resonance)
+        phi = (1.0 + math.sqrt(5.0)) / 2.0
+        golden_phase = (days_since_ref * phi) % 1.0
+        golden_sin = math.sin(2.0 * math.pi * golden_phase)
+        golden_cos = math.cos(2.0 * math.pi * golden_phase)
+
+        return {
+            'season_sin': round(float(season_sin), 4),
+            'season_cos': round(float(season_cos), 4),
+            'solar_declination': round(float(solar_declination), 2),
+            'lunar_dist_ratio': round(float(lunar_dist_ratio), 4),
+            'grav_tidal_force': round(float(grav_tidal_force), 4),
+            'lunar_declination': round(float(lunar_declination), 2),
+            'composite_tide_index': round(float(composite_tide_index), 4),
+            'golden_sin': round(float(golden_sin), 4),
+            'golden_cos': round(float(golden_cos), 4)
+        }
+    except Exception:
+        return {
+            'season_sin': 0.0,
+            'season_cos': 1.0,
+            'solar_declination': 0.0,
+            'lunar_dist_ratio': 1.0,
+            'grav_tidal_force': 1.0,
+            'lunar_declination': 0.0,
+            'composite_tide_index': 1.0,
+            'golden_sin': 0.0,
+            'golden_cos': 1.0
+        }
+
+
 def compute_lunar_features(date_str, hour_art=21):
     """
-    Computes exact astronomical lunar features for a given date at hour_art ART (UTC-3).
+    Computes exact astronomical lunar features for a given date at hour_art ART (UTC-3),
+    plus gravitational tides and seasonal ephemeris.
     """
     dt_local = datetime.datetime.strptime(f"{date_str} {hour_art:02d}:00:00", "%Y-%m-%d %H:%M:%S")
     dt_utc = dt_local.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=-3))).astimezone(datetime.timezone.utc)
@@ -87,28 +193,33 @@ def compute_lunar_features(date_str, hour_art=21):
         phase_name = 'Cuarto Menguante'
     else:
         phase_name = 'Menguante'
-        
-    return {
+
+    res = {
         'lunar_phase': round(phase, 4),
         'lunar_sin': round(lunar_sin, 4),
         'lunar_cos': round(lunar_cos, 4),
         'lunar_illumination': round(illumination, 2),
         'lunar_phase_name': phase_name
     }
+    # Merge quantum and gravitational tidal features
+    res.update(compute_quantum_celestial_features(date_str, hour_art=hour_art))
+    return res
 
 
-def fetch_weather_historical(lottery):
+def fetch_weather_historical(lottery, start_date='2024-01-01', end_date=None):
+    if end_date is None:
+        end_date = datetime.date.today().isoformat()
     coords = COORDINATES.get(lottery, COORDINATES['ciudad'])
     url = (
         f"https://archive-api.open-meteo.com/v1/archive?"
         f"latitude={coords['lat']}&longitude={coords['lon']}&"
-        f"start_date=2025-10-15&end_date=2026-10-20&"
+        f"start_date={start_date}&end_date={end_date}&"
         f"hourly=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m&"
         f"timezone={coords['tz'].replace('/', '%2F')}"
     )
     for attempt in range(3):
         try:
-            r = requests.get(url, timeout=20)
+            r = requests.get(url, timeout=30)
             if r.status_code == 200:
                 data = r.json()
                 hourly = data.get('hourly', {})
@@ -134,7 +245,7 @@ def fetch_weather_historical(lottery):
     return {}
 
 
-def fetch_weather_forecast(lottery, target_date='2026-10-20'):
+def fetch_weather_forecast(lottery, target_date='2026-10-27'):
     coords = COORDINATES.get(lottery, COORDINATES['ciudad'])
     fallback = {
         'temperature_2m': 18.6,
@@ -143,7 +254,10 @@ def fetch_weather_forecast(lottery, target_date='2026-10-20'):
         'wind_speed_10m': 14.5,
         'air_density': 1.2250,
         'dew_point': 12.1,
-        'static_risk': 0.0
+        'static_risk': 0.0,
+        'dynamic_viscosity': 1.815,
+        'kinematic_viscosity': 1.481,
+        'ball_buoyant_ratio': 0.0152
     }
 
     urls = [
@@ -183,6 +297,7 @@ def fetch_weather_forecast(lottery, target_date='2026-10-20'):
                             h_val = float(hum)
                             p_val = float(pres)
                             w_val = float(wnd)
+                            visc = compute_viscosity_and_buoyancy(t_val, p_val, h_val)
                             return {
                                 'temperature_2m': t_val,
                                 'relative_humidity_2m': h_val,
@@ -190,13 +305,17 @@ def fetch_weather_forecast(lottery, target_date='2026-10-20'):
                                 'wind_speed_10m': w_val,
                                 'air_density': compute_air_density(t_val, p_val, h_val),
                                 'dew_point': compute_dew_point(t_val, h_val),
-                                'static_risk': compute_static_risk(h_val)
+                                'static_risk': compute_static_risk(h_val),
+                                'dynamic_viscosity': visc['dynamic_viscosity'],
+                                'kinematic_viscosity': visc['kinematic_viscosity'],
+                                'ball_buoyant_ratio': visc['ball_buoyant_ratio']
                             }
                     if temps and temps[-1] is not None:
                         t_val = float(temps[-1])
                         h_val = float(humids[-1])
                         p_val = float(pressures[-1])
                         w_val = float(winds[-1])
+                        visc = compute_viscosity_and_buoyancy(t_val, p_val, h_val)
                         return {
                             'temperature_2m': t_val,
                             'relative_humidity_2m': h_val,
@@ -204,7 +323,10 @@ def fetch_weather_forecast(lottery, target_date='2026-10-20'):
                             'wind_speed_10m': w_val,
                             'air_density': compute_air_density(t_val, p_val, h_val),
                             'dew_point': compute_dew_point(t_val, h_val),
-                            'static_risk': compute_static_risk(h_val)
+                            'static_risk': compute_static_risk(h_val),
+                            'dynamic_viscosity': visc['dynamic_viscosity'],
+                            'kinematic_viscosity': visc['kinematic_viscosity'],
+                            'ball_buoyant_ratio': visc['ball_buoyant_ratio']
                         }
             except Exception:
                 time.sleep(0.5)
@@ -215,7 +337,7 @@ def fetch_weather_forecast(lottery, target_date='2026-10-20'):
 def compute_autoregressive_features(df_lottery):
     """
     Computes lag features, rolling statistics, delays (atrasos), parity, calendar cycles,
-    and mechanical sequential properties for chronologically sorted draws.
+    rolling Shannon drum entropy, and mechanical sequential properties for chronologically sorted draws.
     """
     df = df_lottery.sort_values('date').copy().reset_index(drop=True)
     dt_series = pd.to_datetime(df['date'])
@@ -255,6 +377,20 @@ def compute_autoregressive_features(df_lottery):
     df['rolling_mean_3'] = df['number_2d'].shift(1).rolling(window=3, min_periods=1).mean()
     df['rolling_mean_7'] = df['number_2d'].shift(1).rolling(window=7, min_periods=1).mean()
     df['rolling_std_7'] = df['number_2d'].shift(1).rolling(window=7, min_periods=2).std().fillna(0)
+
+    # Rolling drum Shannon entropy of last 10 draws (captures turbulent vs ordered attractor state)
+    entropies = []
+    nums = df['number_2d'].values
+    for idx in range(len(nums)):
+        if idx < 5:
+            entropies.append(3.32)
+        else:
+            window = nums[max(0, idx-10):idx]
+            _, counts = np.unique(window, return_counts=True)
+            p = counts / counts.sum()
+            ent = -np.sum(p * np.log2(p + 1e-9))
+            entropies.append(round(float(ent), 3))
+    df['drum_entropy_10'] = entropies
     
     # Dynamic delay tracking (atrasos)
     atraso_dec_history = {d: 0 for d in range(10)}
@@ -322,8 +458,12 @@ def enrich_dataset(raw_csv_path, output_csv_path):
         
         temps, hums, press, winds = [], [], [], []
         densities, dew_points, static_risks = [], [], []
+        dyn_viscs, kin_viscs, buoy_ratios = [], [], []
         l_phase, l_sin, l_cos, l_illum, l_names = [], [], [], [], []
-        
+        season_sins, season_coss, solar_decls = [], [], []
+        lunar_dists, grav_tides, lunar_decls, comp_tides = [], [], [], []
+        golden_sins, golden_coss = [], []
+
         for idx, row in sub_auto.iterrows():
             d_str = row['date']
             w = weather_data[lot].get(d_str, {})
@@ -331,23 +471,40 @@ def enrich_dataset(raw_csv_path, output_csv_path):
             h_val = w.get('relative_humidity_2m', 65.0)
             p_val = w.get('surface_pressure', 1015.0)
             w_val = w.get('wind_speed_10m', 12.0)
-            
+
             temps.append(t_val)
             hums.append(h_val)
             press.append(p_val)
             winds.append(w_val)
-            
+
             densities.append(compute_air_density(t_val, p_val, h_val))
             dew_points.append(compute_dew_point(t_val, h_val))
             static_risks.append(compute_static_risk(h_val))
-            
+
+            visc = compute_viscosity_and_buoyancy(t_val, p_val, h_val)
+            dyn_viscs.append(visc['dynamic_viscosity'])
+            kin_viscs.append(visc['kinematic_viscosity'])
+            buoy_ratios.append(visc['ball_buoyant_ratio'])
+
             lunar = compute_lunar_features(d_str)
             l_phase.append(lunar['lunar_phase'])
             l_sin.append(lunar['lunar_sin'])
             l_cos.append(lunar['lunar_cos'])
             l_illum.append(lunar['lunar_illumination'])
             l_names.append(lunar['lunar_phase_name'])
-            
+
+            season_sins.append(lunar.get('season_sin', 0.0))
+            season_coss.append(lunar.get('season_cos', 1.0))
+            solar_decls.append(lunar.get('solar_declination', 0.0))
+
+            lunar_dists.append(lunar.get('lunar_dist_ratio', 1.0))
+            grav_tides.append(lunar.get('grav_tidal_force', 1.0))
+            lunar_decls.append(lunar.get('lunar_declination', 0.0))
+            comp_tides.append(lunar.get('composite_tide_index', 1.0))
+
+            golden_sins.append(lunar.get('golden_sin', 0.0))
+            golden_coss.append(lunar.get('golden_cos', 1.0))
+
         sub_auto['temperature_2m'] = temps
         sub_auto['relative_humidity_2m'] = hums
         sub_auto['surface_pressure'] = press
@@ -355,21 +512,40 @@ def enrich_dataset(raw_csv_path, output_csv_path):
         sub_auto['air_density'] = densities
         sub_auto['dew_point'] = dew_points
         sub_auto['static_risk'] = static_risks
-        
+        sub_auto['dynamic_viscosity'] = dyn_viscs
+        sub_auto['kinematic_viscosity'] = kin_viscs
+        sub_auto['ball_buoyant_ratio'] = buoy_ratios
+
         sub_auto['lunar_phase'] = l_phase
         sub_auto['lunar_sin'] = l_sin
         sub_auto['lunar_cos'] = l_cos
         sub_auto['lunar_illumination'] = l_illum
         sub_auto['lunar_phase_name'] = l_names
-        
+
+        sub_auto['season_sin'] = season_sins
+        sub_auto['season_cos'] = season_coss
+        sub_auto['solar_declination'] = solar_decls
+
+        sub_auto['lunar_dist_ratio'] = lunar_dists
+        sub_auto['grav_tidal_force'] = grav_tides
+        sub_auto['lunar_declination'] = lunar_decls
+        sub_auto['composite_tide_index'] = comp_tides
+
+        sub_auto['golden_sin'] = golden_sins
+        sub_auto['golden_cos'] = golden_coss
+
         # Forward-fill any minor missing values
-        sub_auto['temperature_2m'] = sub_auto['temperature_2m'].bfill().ffill()
-        sub_auto['relative_humidity_2m'] = sub_auto['relative_humidity_2m'].bfill().ffill()
-        sub_auto['surface_pressure'] = sub_auto['surface_pressure'].bfill().ffill()
-        sub_auto['wind_speed_10m'] = sub_auto['wind_speed_10m'].bfill().ffill()
-        sub_auto['air_density'] = sub_auto['air_density'].bfill().ffill()
-        sub_auto['dew_point'] = sub_auto['dew_point'].bfill().ffill()
-        sub_auto['static_risk'] = sub_auto['static_risk'].bfill().ffill()
+        fill_cols = [
+            'temperature_2m', 'relative_humidity_2m', 'surface_pressure', 'wind_speed_10m',
+            'air_density', 'dew_point', 'static_risk', 'dynamic_viscosity', 'kinematic_viscosity', 'ball_buoyant_ratio',
+            'lunar_phase', 'lunar_sin', 'lunar_cos', 'lunar_illumination',
+            'season_sin', 'season_cos', 'solar_declination',
+            'lunar_dist_ratio', 'grav_tidal_force', 'lunar_declination', 'composite_tide_index',
+            'golden_sin', 'golden_cos'
+        ]
+        for col_f in fill_cols:
+            if col_f in sub_auto.columns:
+                sub_auto[col_f] = sub_auto[col_f].bfill().ffill()
         
         enriched_dfs.append(sub_auto)
         

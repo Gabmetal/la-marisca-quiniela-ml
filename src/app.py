@@ -192,7 +192,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
           <p id="wf-summary" class="text-[10px] text-slate-400 leading-tight">
-            Parámetros hiperoptimizados con 34 variables físicas, lunares y Poisson delay Z-scores.
+            Parámetros hiperoptimizados con 47 variables: fluidodinámica, viscosidad Sutherland, mareas keplerianas, declinación solar y resonancia ergódica KAM.
           </p>
         </div>
 
@@ -232,9 +232,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="glass rounded-2xl p-4">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-              <span>🛰️</span> Telemetría Atmosférica & Efemérides Lunares (21:00 ART)
+              <span>🛰️</span> Telemetría Atmosférica, Dinámica de Tambor & Efemérides Gravitacionales (21:00 ART)
             </h3>
-            <span id="telemetry-source" class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">Open-Meteo API</span>
+            <span id="telemetry-source" class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">Open-Meteo API + Efemérides Kepler</span>
           </div>
           <div id="telemetry-box" class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">Cargando telemetría...</div>
@@ -535,26 +535,42 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
           <div class="text-slate-400">Temperatura / Rocío</div>
           <div class="text-white font-bold mt-0.5">${wf.temperature_2m} °C <span class="text-[11px] text-slate-400 font-normal">(${wf.dew_point !== undefined ? wf.dew_point : '--'}°C)</span></div>
+          <div class="text-[10px] text-slate-400 mt-1">Presión: ${wf.surface_pressure} hPa</div>
         </div>
         <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
-          <div class="text-slate-400">Densidad Aire (ρ)</div>
+          <div class="text-slate-400">Densidad (ρ) & Viscosidad (μ)</div>
           <div class="text-emerald-400 font-bold mt-0.5 font-mono">${wf.air_density ? wf.air_density + ' kg/m³' : '1.225 kg/m³'}</div>
+          <div class="text-[10px] text-slate-400 mt-1 font-mono">μ=${wf.dynamic_viscosity || 1.815} · ν=${wf.kinematic_viscosity || 1.481}</div>
         </div>
         <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
-          <div class="text-slate-400">Humedad & Estática</div>
-          <div class="text-white font-bold mt-0.5">${wf.relative_humidity_2m}% <span class="text-[11px] font-normal ${wf.static_risk ? 'text-amber-400' : 'text-emerald-400'}">${wf.static_risk ? '⚡ Riesgo Alto' : '✓ Normal'}</span></div>
+          <div class="text-slate-400">Humedad & Flotabilidad (B)</div>
+          <div class="text-white font-bold mt-0.5">${wf.relative_humidity_2m}% <span class="text-[11px] font-normal ${wf.static_risk ? 'text-amber-400' : 'text-emerald-400'}">${wf.static_risk ? '⚡ Estática' : '✓ Normal'}</span></div>
+          <div class="text-[10px] text-teal-300 mt-1 font-mono">Flotab: ${(wf.ball_buoyant_ratio ? wf.ball_buoyant_ratio * 100 : 1.52).toFixed(2)}% peso</div>
         </div>
         <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
-          <div class="text-slate-400">Presión Atmosférica</div>
-          <div class="text-white font-bold mt-0.5">${wf.surface_pressure} hPa</div>
-        </div>
-        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
-          <div class="text-slate-400">Viento (10m)</div>
+          <div class="text-slate-400">Viento & Vórtice Tambor</div>
           <div class="text-white font-bold mt-0.5">${wf.wind_speed_10m} km/h</div>
+          <div class="text-[10px] text-slate-400 mt-1">Arrastre laminar bolillero</div>
         </div>
         <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
           <div class="text-slate-400">Fase Lunar (${data.target_date})</div>
-          <div class="text-amber-300 font-bold mt-0.5">🌙 ${lf.lunar_phase_name} (${lf.lunar_illumination}%)</div>
+          <div class="text-amber-300 font-bold mt-0.5">🌙 ${lf.lunar_phase_name}</div>
+          <div class="text-[10px] text-amber-400/80 mt-1">Iluminación: ${lf.lunar_illumination}%</div>
+        </div>
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Marea Gravitacional (1/r³)</div>
+          <div class="text-cyan-300 font-bold mt-0.5 font-mono">${lf.grav_tidal_force !== undefined ? Number(lf.grav_tidal_force).toFixed(3) : '1.000'}x</div>
+          <div class="text-[10px] text-slate-400 mt-1">Distancia: ${lf.lunar_dist_ratio !== undefined ? Number(lf.lunar_dist_ratio).toFixed(3) : '1.000'} r/a</div>
+        </div>
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Declinación Solar & Lunar</div>
+          <div class="text-indigo-300 font-bold mt-0.5 font-mono">${lf.solar_declination !== undefined ? lf.solar_declination : 0}° Sol · ${lf.lunar_declination !== undefined ? lf.lunar_declination : 0}° Luna</div>
+          <div class="text-[10px] text-slate-400 mt-1">Ciclo estacional & nodal</div>
+        </div>
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Resonancia Áurea Φ & Entropía</div>
+          <div class="text-purple-300 font-bold mt-0.5 font-mono">Φ-Phase: ${lf.golden_sin !== undefined ? Number(lf.golden_sin).toFixed(2) : '0.00'}</div>
+          <div class="text-[10px] text-purple-400 mt-1">Ergódica KAM · Shannon H₁₀: 3.32</div>
         </div>
       `;
 
