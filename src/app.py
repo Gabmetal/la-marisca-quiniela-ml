@@ -275,6 +275,72 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Prediction Tracking & Accuracy Scorecard -->
+        <div class="glass rounded-2xl p-5 space-y-4 border border-emerald-500/30">
+          <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <span>🎯</span> Auditoría y Seguimiento de Predicciones Reales
+              </h2>
+              <p class="text-xs text-slate-400 mt-0.5">
+                Historial auditado de pronósticos vs. sorteos oficiales de LOTBA con verificación de aciertos y ROI simulado.
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="backfillTracker()" id="backfill-btn" class="text-xs px-3 py-1.5 rounded-lg bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-500/30 font-semibold transition flex items-center gap-1.5">
+                <span>🔬</span> Auditar Últimos 30 Sorteos
+              </button>
+              <button onclick="loadTracker()" id="refresh-tracker-btn" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                <span>🔄</span> Refrescar
+              </button>
+            </div>
+          </div>
+
+          <!-- Tracker Summary KPIs -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+            <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+              <div class="text-[11px] text-slate-400">Tasa Acierto Exacto (Ambo)</div>
+              <div id="tr-hit-rate" class="text-xl font-black text-emerald-400 font-mono mt-0.5">--%</div>
+              <div id="tr-hit-lift" class="text-[10px] text-slate-400 mt-0.5">Base azar: 5.0%</div>
+            </div>
+            <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+              <div class="text-[11px] text-slate-400">Acierto de Dígito Ganador</div>
+              <div id="tr-digit-rate" class="text-xl font-black text-cyan-400 font-mono mt-0.5">--%</div>
+              <div id="tr-digit-detail" class="text-[10px] text-slate-400 mt-0.5">Decena: -- | Unidad: --</div>
+            </div>
+            <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+              <div class="text-[11px] text-slate-400">Balance Simulado (Pago 70x)</div>
+              <div id="tr-pnl" class="text-xl font-black text-emerald-300 font-mono mt-0.5">--</div>
+              <div id="tr-roi" class="text-[10px] text-slate-400 mt-0.5">ROI: --% ($1 / ticket)</div>
+            </div>
+            <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+              <div class="text-[11px] text-slate-400">Sorteos Auditados</div>
+              <div id="tr-evaluated" class="text-xl font-black text-indigo-400 font-mono mt-0.5">--</div>
+              <div id="tr-pending" class="text-[10px] text-slate-400 mt-0.5">Pendientes: --</div>
+            </div>
+          </div>
+
+          <!-- Tracker Ledger Table -->
+          <div class="overflow-x-auto max-h-[380px] overflow-y-auto pr-1">
+            <table class="w-full text-xs text-left">
+              <thead class="text-slate-400 border-b border-slate-800 sticky top-0 bg-slate-950/95 backdrop-blur z-10">
+                <tr>
+                  <th class="pb-2">Fecha Sorteo</th>
+                  <th class="pb-2">Sorteo Real (1°)</th>
+                  <th class="pb-2">Ambo Real</th>
+                  <th class="pb-2">Top 5 Pronosticado</th>
+                  <th class="pb-2">Resultado / Calificación</th>
+                  <th class="pb-2">P&L Simulado</th>
+                  <th class="pb-2">Origen</th>
+                </tr>
+              </thead>
+              <tbody id="tracker-tbody" class="divide-y divide-slate-800/60 font-mono text-slate-300">
+                <tr><td colspan="7" class="py-4 text-center text-slate-500">Cargando historial de predicciones...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- Recent Draws in SQLite Table -->
         <div class="glass rounded-2xl p-5 space-y-4">
           <h2 class="text-lg font-bold text-white flex items-center gap-2">
@@ -553,6 +619,105 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           </tr>
         `).join('');
       }
+
+      // Refresh Tracker ledger after prediction
+      loadTracker();
+    }
+
+    async function loadTracker() {
+      try {
+        const lottery = document.getElementById('lottery-select') ? document.getElementById('lottery-select').value : 'ciudad';
+        const res = await fetch(`/api/tracker?lottery=${lottery}`);
+        const data = await res.json();
+        renderTracker(data);
+      } catch (err) {
+        console.error("Error loading tracker:", err);
+      }
+    }
+
+    async function backfillTracker() {
+      const btn = document.getElementById('backfill-btn');
+      btn.innerHTML = '⏳ Auditando 30 sorteos...';
+      try {
+        const lottery = document.getElementById('lottery-select') ? document.getElementById('lottery-select').value : 'ciudad';
+        const res = await fetch('/api/tracker/backfill', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({days: 30, lottery: lottery})
+        });
+        const data = await res.json();
+        btn.innerHTML = `✓ Auditados (${data.results.backfilled})`;
+        setTimeout(() => { btn.innerHTML = '<span>🔬</span> Auditar Últimos 30 Sorteos'; }, 3000);
+        renderTracker(data.results.report);
+      } catch (err) {
+        console.error("Error backfilling tracker:", err);
+        btn.innerHTML = '⚠️ Error Auditoría';
+        setTimeout(() => { btn.innerHTML = '<span>🔬</span> Auditar Últimos 30 Sorteos'; }, 3000);
+      }
+    }
+
+    function renderTracker(data) {
+      if (!data || !data.summary) return;
+      const s = data.summary;
+      document.getElementById('tr-hit-rate').textContent = `${s.exact_hit_rate_pct}% (${s.exact_hits}/${s.evaluated_count})`;
+      document.getElementById('tr-hit-lift').textContent = `Lift: +${s.lift_over_random_pct}% vs azar 5%`;
+
+      const digitHitRate = Math.round((s.decena_hits + s.unidad_hits) / (Math.max(1, s.evaluated_count * 2)) * 100);
+      document.getElementById('tr-digit-rate').textContent = `${digitHitRate}%`;
+      document.getElementById('tr-digit-detail').textContent = `Decena: ${s.decena_hit_rate_pct}% | Unidad: ${s.unidad_hit_rate_pct}%`;
+
+      const pnlPrefix = s.net_profit_ars >= 0 ? '+$' : '-$';
+      const pnlClass = s.net_profit_ars >= 0 ? 'text-emerald-300' : 'text-rose-400';
+      document.getElementById('tr-pnl').className = `text-xl font-black font-mono mt-0.5 ${pnlClass}`;
+      document.getElementById('tr-pnl').textContent = `${pnlPrefix}${Math.abs(s.net_profit_ars)}`;
+      document.getElementById('tr-roi').textContent = `ROI: ${s.roi_pct}% ($${s.total_won_ars} ganados / $${s.total_staked_ars} costo)`;
+
+      document.getElementById('tr-evaluated').textContent = `${s.evaluated_count}`;
+      document.getElementById('tr-pending').textContent = `Pendientes: ${s.pending_count}`;
+
+      const tbody = document.getElementById('tracker-tbody');
+      if (!data.history || data.history.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-slate-500">No hay predicciones registradas aún. Haz una predicción o corre la auditoría.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = data.history.map(item => {
+        const picksHtml = item.top_picks.map(p => {
+          if (p.is_hit) {
+            return `<span class="inline-block px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-300 font-bold border border-emerald-400 animate-pulse font-mono" title="¡Acierto exacto! Pick #${p.rank} (${p.dominant_driver})">🎯 ${p.number}</span>`;
+          }
+          return `<span class="inline-block px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700 font-mono text-[11px]" title="Pick #${p.rank} (${p.dominant_driver})">${p.number}</span>`;
+        }).join(' ');
+
+        let statusBadge = '';
+        if (item.status_type === 'exact') {
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">🎯 ACIERTO EXACTO (Pick #${item.hit_rank})</span>`;
+        } else if (item.status_type === 'both_digits') {
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">⚡ DECENA + UNIDAD</span>`;
+        } else if (item.status_type === 'decena') {
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">⚡ DECENA (${Math.floor(item.actual_number_2d / 10)}x)</span>`;
+        } else if (item.status_type === 'unidad') {
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/40">⚡ UNIDAD (x${item.actual_number_2d % 10})</span>`;
+        } else if (item.status_type === 'pending') {
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">⏳ PENDIENTE (21:00)</span>`;
+        } else {
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">❌ NO ACERTÓ</span>`;
+        }
+
+        const payoutText = item.is_evaluated ? (item.payout_sim >= 0 ? `<span class="text-emerald-400 font-bold">+$${item.payout_sim}</span>` : `<span class="text-slate-400">-$${Math.abs(item.payout_sim)}</span>`) : '<span class="text-amber-400">--</span>';
+
+        return `
+          <tr class="hover:bg-slate-900/40 ${item.hit_exact ? 'bg-emerald-950/20' : ''}">
+            <td class="py-2.5 text-white font-bold">${item.target_date}</td>
+            <td class="py-2.5 font-bold text-slate-200">${item.actual_number_4d || '<span class="text-slate-500">Esperando...</span>'}</td>
+            <td class="py-2.5 font-bold ${item.hit_exact ? 'text-emerald-400 text-sm' : 'text-slate-300'}">${item.actual_number_2d !== null ? String(item.actual_number_2d).padStart(2, '0') : '--'}</td>
+            <td class="py-2.5">${picksHtml}</td>
+            <td class="py-2.5">${statusBadge}</td>
+            <td class="py-2.5">${payoutText}</td>
+            <td class="py-2.5 text-[10px] text-slate-500">${item.source}</td>
+          </tr>
+        `;
+      }).join('');
     }
 
     // Set today's date and run initial prediction
@@ -563,6 +728,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       targetDateInput.min = todayStr;
       updateSliders();
       runPrediction();
+      loadTracker();
     });
   </script>
 </body>
@@ -630,6 +796,21 @@ async def api_add_draw(request):
     return JSONResponse({'status': 'ok', 'saved': saved, 'db_stats': predictor.db.get_db_stats()})
 
 
+async def api_tracker(request):
+    lottery = request.query_params.get('lottery', 'ciudad')
+    limit = int(request.query_params.get('limit', 60))
+    report = predictor.db.get_tracker_report(lottery=lottery, limit=limit)
+    return JSONResponse(report)
+
+
+async def api_tracker_backfill(request):
+    body = await request.json() if request.headers.get('content-length', '0') != '0' else {}
+    days = int(body.get('days', 30))
+    lottery = body.get('lottery', 'ciudad')
+    res = await asyncio.to_thread(predictor.backfill_historical_predictions, days=days, lottery=lottery)
+    return JSONResponse({'status': 'ok', 'results': res})
+
+
 app = Starlette(
     debug=False,
     routes=[
@@ -637,6 +818,8 @@ app = Starlette(
         Route('/api/health', api_health, methods=['GET']),
         Route('/api/predict', api_predict, methods=['POST']),
         Route('/api/sync', api_sync, methods=['POST']),
+        Route('/api/tracker', api_tracker, methods=['GET']),
+        Route('/api/tracker/backfill', api_tracker_backfill, methods=['POST']),
         Route('/api/hyperopt', api_hyperopt, methods=['POST']),
         Route('/api/hyperopt/results', api_hyperopt_results, methods=['GET']),
         Route('/api/add_draw', api_add_draw, methods=['POST']),

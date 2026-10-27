@@ -36,6 +36,11 @@ spec:
                     -H "Content-Type: application/json" \
                     -d '{"lottery": "ciudad"}' || echo "[WARN] Hyperopt request failed"
 
+                  echo "[CRON] $(date) - Generating & Logging Prediction for Next Draw..."
+                  curl -sf -X POST http://la-marisca-service.la-marisca.svc.cluster.local:8000/api/predict \
+                    -H "Content-Type: application/json" \
+                    -d '{"lottery": "ciudad", "ticket_count": 5}' || echo "[WARN] Auto-prediction request failed"
+
                   echo "[CRON] $(date) - Done."
               resources:
                 limits:

@@ -66,13 +66,22 @@ class QuinielaDatabase:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     target_date TEXT NOT NULL,
                     lottery TEXT NOT NULL,
+                    ticket_count INTEGER DEFAULT 5,
                     top_picks_json TEXT NOT NULL,
+                    picks_list TEXT,
+                    strategy_weights_json TEXT,
                     actual_number_4d TEXT,
                     actual_number_2d INTEGER,
                     hit_exact INTEGER DEFAULT 0,
+                    hit_rank INTEGER,
+                    hit_number TEXT,
                     hit_decena INTEGER DEFAULT 0,
                     hit_unidad INTEGER DEFAULT 0,
+                    payout_sim REAL DEFAULT 0.0,
+                    is_evaluated INTEGER DEFAULT 0,
+                    source TEXT DEFAULT 'web_ui',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(target_date, lottery)
                 )
             """)
@@ -81,6 +90,23 @@ class QuinielaDatabase:
             for col, col_type in [('air_density', 'REAL'), ('dew_point', 'REAL'), ('static_risk', 'REAL')]:
                 if col not in existing_cols:
                     conn.execute(f"ALTER TABLE draws ADD COLUMN {col} {col_type}")
+
+            existing_pred_cols = [r[1] for r in conn.execute("PRAGMA table_info(predictions_log)").fetchall()]
+            pred_cols_to_add = [
+                ('ticket_count', 'INTEGER DEFAULT 5'),
+                ('picks_list', 'TEXT'),
+                ('strategy_weights_json', 'TEXT'),
+                ('hit_rank', 'INTEGER'),
+                ('hit_number', 'TEXT'),
+                ('payout_sim', 'REAL DEFAULT 0.0'),
+                ('is_evaluated', 'INTEGER DEFAULT 0'),
+                ('source', "TEXT DEFAULT 'web_ui'"),
+                ('updated_at', 'TEXT')
+            ]
+            for col, col_def in pred_cols_to_add:
+                if col not in existing_pred_cols:
+                    conn.execute(f"ALTER TABLE predictions_log ADD COLUMN {col} {col_def}")
+
             conn.commit()
 
     def _bootstrap_from_csv_if_needed(self):
@@ -176,61 +202,236 @@ class QuinielaDatabase:
                 lunar['lunar_illumination'], lunar['lunar_phase_name'],
                 source, now_iso
             ))
-            # Check if there was a logged prediction for this date and lottery to grade it
+            # Auto-grade any pending prediction for this date and lottery
             pred_row = conn.execute(
-                "SELECT id, top_picks_json FROM predictions_log WHERE target_date=? AND lottery=?",
+                "SELECT id, top_picks_json, ticket_count FROM predictions_log WHERE target_date=? AND lottery=?",
                 (date_str, lottery)
             ).fetchone()
             if pred_row:
-                picks = json.loads(pred_row['top_picks_json'])
-                pick_ints = [int(p) for p in picks]
+                raw_picks = json.loads(pred_row['top_picks_json'])
+                pick_ints = []
+                for p in raw_picks:
+                    if isinstance(p, dict):
+                        pick_ints.append(int(p.get('number', p.get('number_int', 0))))
+                    else:
+                        pick_ints.append(int(p))
+                t_count = pred_row['ticket_count'] or len(pick_ints) or 5
                 hit_exact = 1 if n2 in pick_ints else 0
+                hit_rank = (pick_ints.index(n2) + 1) if hit_exact else None
+                hit_number = f"{n2:02d}" if hit_exact else None
                 hit_dec = 1 if any(divmod(p, 10)[0] == dec for p in pick_ints) else 0
                 hit_uni = 1 if any(divmod(p, 10)[1] == uni for p in pick_ints) else 0
+                payout = (70.0 - float(t_count)) if hit_exact else -float(t_count)
                 conn.execute("""
                     UPDATE predictions_log
-                    SET actual_number_4d=?, actual_number_2d=?, hit_exact=?, hit_decena=?, hit_unidad=?
+                    SET actual_number_4d=?, actual_number_2d=?, hit_exact=?, hit_rank=?,
+                        hit_number=?, hit_decena=?, hit_unidad=?, payout_sim=?, is_evaluated=1,
+                        updated_at=CURRENT_TIMESTAMP
                     WHERE id=?
-                """, (num_str, n2, hit_exact, hit_dec, hit_uni, pred_row['id']))
+                """, (num_str, n2, hit_exact, hit_rank, hit_number, hit_dec, hit_uni, payout, pred_row['id']))
             conn.commit()
 
         self.rebuild_enriched_dataset()
         return {'date': date_str, 'lottery': lottery, 'number_4d': num_str, 'number_2d': f'{n2:02d}'}
 
-    def log_prediction(self, target_date, lottery, top_picks_list):
-        """Saves a prediction portfolio to SQLite and grades it if the draw already exists."""
-        picks_json = json.dumps([f"{int(x):02d}" for x in top_picks_list])
+    def log_prediction(
+        self,
+        target_date,
+        lottery,
+        top_picks_list,
+        top_picks_details=None,
+        strategy_weights=None,
+        ticket_count=None,
+        source='web_ui'
+    ):
+        """
+        Saves a prediction portfolio to SQLite and immediately grades it if the target draw already exists.
+        """
+        pick_ints = [int(x) for x in top_picks_list]
+        picks_list_str = ",".join(f"{p:02d}" for p in pick_ints)
+        k = ticket_count or len(pick_ints) or 5
+
+        if top_picks_details:
+            picks_json = json.dumps(top_picks_details)
+        else:
+            picks_json = json.dumps([{"rank": i + 1, "number": f"{p:02d}", "number_int": p} for i, p in enumerate(pick_ints)])
+
+        weights_json = json.dumps(strategy_weights) if strategy_weights else None
+
         with self._get_conn() as conn:
             draw_row = conn.execute(
                 "SELECT number_4d, number_2d, decena, unidad FROM draws WHERE date=? AND lottery=?",
                 (target_date, lottery)
             ).fetchone()
-            act_4d, act_2d, hit_ex, hit_d, hit_u = None, None, 0, 0, 0
+
             if draw_row:
                 act_4d = draw_row['number_4d']
                 act_2d = int(draw_row['number_2d'])
                 dec = int(draw_row['decena'])
                 uni = int(draw_row['unidad'])
-                pick_ints = [int(p) for p in top_picks_list]
                 hit_ex = 1 if act_2d in pick_ints else 0
+                hit_r = (pick_ints.index(act_2d) + 1) if hit_ex else None
+                hit_num = f"{act_2d:02d}" if hit_ex else None
                 hit_d = 1 if any(divmod(p, 10)[0] == dec for p in pick_ints) else 0
                 hit_u = 1 if any(divmod(p, 10)[1] == uni for p in pick_ints) else 0
+                payout = (70.0 - float(k)) if hit_ex else -float(k)
+                is_eval = 1
+            else:
+                act_4d = None
+                act_2d = None
+                hit_ex = 0
+                hit_r = None
+                hit_num = None
+                hit_d = 0
+                hit_u = 0
+                payout = 0.0
+                is_eval = 0
 
             conn.execute("""
                 INSERT INTO predictions_log (
-                    target_date, lottery, top_picks_json, actual_number_4d, actual_number_2d,
-                    hit_exact, hit_decena, hit_unidad
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    target_date, lottery, ticket_count, top_picks_json, picks_list,
+                    strategy_weights_json, actual_number_4d, actual_number_2d,
+                    hit_exact, hit_rank, hit_number, hit_decena, hit_unidad,
+                    payout_sim, is_evaluated, source, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(target_date, lottery) DO UPDATE SET
+                    ticket_count=excluded.ticket_count,
                     top_picks_json=excluded.top_picks_json,
+                    picks_list=excluded.picks_list,
+                    strategy_weights_json=excluded.strategy_weights_json,
                     actual_number_4d=excluded.actual_number_4d,
                     actual_number_2d=excluded.actual_number_2d,
                     hit_exact=excluded.hit_exact,
+                    hit_rank=excluded.hit_rank,
+                    hit_number=excluded.hit_number,
                     hit_decena=excluded.hit_decena,
                     hit_unidad=excluded.hit_unidad,
-                    created_at=CURRENT_TIMESTAMP
-            """, (target_date, lottery, picks_json, act_4d, act_2d, hit_ex, hit_d, hit_u))
+                    payout_sim=excluded.payout_sim,
+                    is_evaluated=excluded.is_evaluated,
+                    source=excluded.source,
+                    updated_at=CURRENT_TIMESTAMP
+            """, (
+                target_date, lottery, k, picks_json, picks_list_str,
+                weights_json, act_4d, act_2d,
+                hit_ex, hit_r, hit_num, hit_d, hit_u,
+                payout, is_eval, source
+            ))
             conn.commit()
+
+    def get_tracker_report(self, lottery='ciudad', limit=60):
+        """
+        Returns full prediction audit history and aggregate accuracy metrics.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT * FROM predictions_log
+                WHERE lottery = ?
+                ORDER BY target_date DESC
+                LIMIT ?
+            """, (lottery, limit)).fetchall()
+
+        history = []
+        exact_hits = 0
+        decena_hits = 0
+        unidad_hits = 0
+        evaluated_count = 0
+        pending_count = 0
+        total_payout = 0.0
+        total_staked = 0.0
+
+        for r in rows:
+            d = dict(r)
+            try:
+                raw_picks = json.loads(d['top_picks_json'])
+            except Exception:
+                raw_picks = []
+
+            formatted_picks = []
+            act_2d = d['actual_number_2d']
+            for idx, p in enumerate(raw_picks, start=1):
+                if isinstance(p, dict):
+                    num_int = int(p.get('number', p.get('number_int', 0)))
+                    p_num = f"{num_int:02d}"
+                    prob = p.get('master_prob_pct', p.get('prob_pct', 0.0))
+                    driver = p.get('dominant_driver', 'Ensemble')
+                else:
+                    num_int = int(p)
+                    p_num = f"{num_int:02d}"
+                    prob = 0.0
+                    driver = 'Ensemble'
+                is_hit = (d['is_evaluated'] == 1 and act_2d is not None and num_int == act_2d)
+                formatted_picks.append({
+                    'rank': idx,
+                    'number': p_num,
+                    'number_int': num_int,
+                    'prob_pct': prob,
+                    'dominant_driver': driver,
+                    'is_hit': is_hit
+                })
+
+            if d['is_evaluated'] == 1:
+                evaluated_count += 1
+                t_count = d.get('ticket_count') or len(formatted_picks) or 5
+                total_staked += float(t_count)
+                if d['hit_exact'] == 1:
+                    exact_hits += 1
+                    total_payout += 70.0
+                if d['hit_decena'] == 1:
+                    decena_hits += 1
+                if d['hit_unidad'] == 1:
+                    unidad_hits += 1
+
+                if d['hit_exact'] == 1:
+                    status_text = f"🎯 ACIERTO EXACTO (Pick #{d.get('hit_rank', 1)})"
+                    status_type = "exact"
+                elif d['hit_decena'] == 1 and d['hit_unidad'] == 1:
+                    status_text = "⚡ AMBOS DÍGITOS (Decena + Unidad)"
+                    status_type = "both_digits"
+                elif d['hit_decena'] == 1:
+                    status_text = f"⚡ ACIERTO DECENA ({divmod(act_2d, 10)[0]}x)"
+                    status_type = "decena"
+                elif d['hit_unidad'] == 1:
+                    status_text = f"⚡ ACIERTO UNIDAD (x{divmod(act_2d, 10)[1]})"
+                    status_type = "unidad"
+                else:
+                    status_text = "❌ NO ACERTÓ"
+                    status_type = "miss"
+            else:
+                pending_count += 1
+                status_text = "⏳ PENDIENTE DE SORTEO (21:00 ART)"
+                status_type = "pending"
+
+            d['top_picks'] = formatted_picks
+            d['status_text'] = status_text
+            d['status_type'] = status_type
+            history.append(d)
+
+        hit_rate_pct = round((100.0 * exact_hits / max(1, evaluated_count)), 2) if evaluated_count > 0 else 0.0
+        decena_rate_pct = round((100.0 * decena_hits / max(1, evaluated_count)), 2) if evaluated_count > 0 else 0.0
+        unidad_rate_pct = round((100.0 * unidad_hits / max(1, evaluated_count)), 2) if evaluated_count > 0 else 0.0
+        net_profit = round(total_payout - total_staked, 2)
+        roi_pct = round((100.0 * net_profit / max(1.0, total_staked)), 2) if evaluated_count > 0 else 0.0
+        lift_pct = round(((hit_rate_pct - 5.0) / 5.0) * 100.0, 1) if evaluated_count > 0 else 0.0
+
+        summary = {
+            'total_tracked': len(rows),
+            'evaluated_count': evaluated_count,
+            'pending_count': pending_count,
+            'exact_hits': exact_hits,
+            'exact_hit_rate_pct': hit_rate_pct,
+            'random_baseline_pct': 5.0,
+            'lift_over_random_pct': lift_pct,
+            'decena_hits': decena_hits,
+            'decena_hit_rate_pct': decena_rate_pct,
+            'unidad_hits': unidad_hits,
+            'unidad_hit_rate_pct': unidad_rate_pct,
+            'total_staked_ars': total_staked,
+            'total_won_ars': total_payout,
+            'net_profit_ars': net_profit,
+            'roi_pct': roi_pct
+        }
+
+        return {'summary': summary, 'history': history}
 
     def rebuild_enriched_dataset(self):
         """Recomputes all autoregressive lags, rolling stats, delay Z-scores, and physical parameters."""

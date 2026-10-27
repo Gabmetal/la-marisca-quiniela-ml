@@ -372,15 +372,23 @@ class RaffleGPUPredictor:
         ticket_count=5,
         taken_numbers=None,
         strategy_weights=None,
-        orthogonal_coverage=True
+        orthogonal_coverage=True,
+        allow_past=False,
+        log_to_db=True,
+        source='web_ui'
     ):
         """
         Executes fast cached prediction and combinatorial portfolio optimization (< 2 ms).
-        Restricted to future target dates (>= today).
+        Restricted to future target dates (>= today) unless allow_past=True (used by backtesting/auditor).
+        Auto-logs predictions to SQLite for accuracy tracking.
         """
         today_str = datetime.date.today().isoformat()
-        if not target_date or target_date < today_str:
-            target_date = today_str
+        if not allow_past:
+            if not target_date or target_date < today_str:
+                target_date = today_str
+        else:
+            if not target_date:
+                target_date = today_str
 
         if taken_numbers is None:
             taken_numbers = []
@@ -388,11 +396,11 @@ class RaffleGPUPredictor:
 
         opt_info = load_optimal_hyperparams()
         optimal_w = opt_info.get('optimal_weights', {
-            'ml_tree': 0.25,
-            'deep_gpu': 0.25,
-            'markov': 0.15,
-            'bayesian_hot': 0.20,
-            'renewal_cold': 0.15
+            'ml_tree': 0.173,
+            'deep_gpu': 0.186,
+            'markov': 0.340,
+            'bayesian_hot': 0.231,
+            'renewal_cold': 0.069
         })
 
         # Apply weights: user override or hyperoptimized defaults
@@ -403,7 +411,12 @@ class RaffleGPUPredictor:
         W = {k: v / w_sum for k, v in W.items()}
 
         df = pd.read_csv(self.enriched_path)
-        sub = df[df['lottery'] == lottery].sort_values('date').copy().reset_index(drop=True)
+        if allow_past and target_date < today_str:
+            sub = df[(df['lottery'] == lottery) & (df['date'] < target_date)].sort_values('date').copy().reset_index(drop=True)
+            if len(sub) < 40:
+                sub = df[df['lottery'] == lottery].sort_values('date').copy().reset_index(drop=True)
+        else:
+            sub = df[df['lottery'] == lottery].sort_values('date').copy().reset_index(drop=True)
 
         comps = self.get_components(sub, lottery, target_date)
         matrix_tree = comps['matrix_tree']
@@ -556,6 +569,21 @@ class RaffleGPUPredictor:
         uni_coverage_pct = len(covered_unidades) * 10.0
         any_digit_hit_prob = (1.0 - (1.0 - len(covered_decenas) / 10.0) * (1.0 - len(covered_unidades) / 10.0)) * 100.0
 
+        # Auto-log prediction to SQLite predictions_log for performance tracking
+        if log_to_db:
+            try:
+                self.db.log_prediction(
+                    target_date=target_date,
+                    lottery=lottery,
+                    top_picks_list=selected_portfolio,
+                    top_picks_details=portfolio_details,
+                    strategy_weights=W,
+                    ticket_count=len(selected_portfolio),
+                    source=source
+                )
+            except Exception as e:
+                print(f"[WARN] Failed to auto-log prediction: {e}")
+
         return {
             'hardware': self.hw_info,
             'lottery': lottery,
@@ -595,4 +623,43 @@ class RaffleGPUPredictor:
                 'shannon_entropy_unidad': round(float(audit['entropy']['unidad']), 4)
             },
             'hyperparams': opt_info
+        }
+
+    def backfill_historical_predictions(self, days=30, lottery='ciudad'):
+        """
+        Runs out-of-sample walk-forward predictions over the last N historical draws
+        and logs them with automatic grading.
+        """
+        with self.db._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT date, number_4d, number_2d
+                FROM draws
+                WHERE lottery = ?
+                ORDER BY date DESC
+                LIMIT ?
+            """, (lottery, days)).fetchall()
+
+        if not rows:
+            return {'backfilled': 0, 'report': self.db.get_tracker_report(lottery=lottery)}
+
+        chronological_dates = [r['date'] for r in reversed(rows)]
+        backfilled_count = 0
+
+        for d_str in chronological_dates:
+            try:
+                self.run_prediction(
+                    lottery=lottery,
+                    target_date=d_str,
+                    ticket_count=5,
+                    allow_past=True,
+                    log_to_db=True,
+                    source='backfill'
+                )
+                backfilled_count += 1
+            except Exception as e:
+                print(f"[WARN] Backfill failed for date {d_str}: {e}")
+
+        return {
+            'backfilled': backfilled_count,
+            'report': self.db.get_tracker_report(lottery=lottery)
         }
