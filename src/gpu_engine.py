@@ -77,6 +77,17 @@ def compute_crowd_bias_scores():
     return edge
 
 
+def count_draws_between(d_start, d_end):
+    """Counts LOTBA drawing days (Monday-Saturday, no Sunday) between d_start and d_end."""
+    count = 0
+    curr = d_start + datetime.timedelta(days=1)
+    while curr <= d_end:
+        if curr.weekday() != 6:  # Sunday skipped
+            count += 1
+        curr += datetime.timedelta(days=1)
+    return max(1, count)
+
+
 def _compute_components_internal(sub, lottery, target_date, hyperparams):
     """
     Computes and returns the 5 probability component matrices + telemetry for a future target date.
@@ -195,6 +206,7 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
     last_row = sub.iloc[-1]
     target_dt = datetime.date.fromisoformat(target_date)
     last_draw_dt = datetime.date.fromisoformat(str(last_row['date']))
+    horizon = count_draws_between(last_draw_dt, target_dt)
     day_of_week = target_dt.weekday()
     day_of_month = target_dt.day
     is_monday = 1.0 if day_of_week == 0 else 0.0
@@ -271,30 +283,43 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
             out[int(c)] = prob
         return out
 
-    # --- PILLAR 1: Tree Ensemble (RF + HistGB with 34 features) ---
-    rf_d = RandomForestClassifier(n_estimators=70, max_depth=4, random_state=42, n_jobs=1).fit(X, y_dec)
-    rf_u = RandomForestClassifier(n_estimators=70, max_depth=4, random_state=42, n_jobs=1).fit(X, y_uni)
-    hgb_d = HistGradientBoostingClassifier(max_iter=50, max_depth=3, random_state=42).fit(X, y_dec)
-    hgb_u = HistGradientBoostingClassifier(max_iter=50, max_depth=3, random_state=42).fit(X, y_uni)
+    # --- PILLAR 1: Tree Ensemble (RF + HistGB with Direct Horizon Multi-Step) ---
+    if horizon > 1 and n_samples > 35:
+        X_dir = X[:-horizon]
+        y_dec_dir = y_dec[horizon:]
+        y_uni_dir = y_uni[horizon:]
+        X_dir_scaled = X_scaled[:-horizon]
+    else:
+        X_dir = X
+        y_dec_dir = y_dec
+        y_uni_dir = y_uni
+        X_dir_scaled = X_scaled
+
+    rf_d = RandomForestClassifier(n_estimators=70, max_depth=4, random_state=42, n_jobs=1).fit(X_dir, y_dec_dir)
+    rf_u = RandomForestClassifier(n_estimators=70, max_depth=4, random_state=42, n_jobs=1).fit(X_dir, y_uni_dir)
+    hgb_d = HistGradientBoostingClassifier(max_iter=50, max_depth=3, random_state=42).fit(X_dir, y_dec_dir)
+    hgb_u = HistGradientBoostingClassifier(max_iter=50, max_depth=3, random_state=42).fit(X_dir, y_uni_dir)
 
     p_tree_d = 0.5 * (full_prob(rf_d, x_target_df) + full_prob(hgb_d, x_target_df))
     p_tree_u = 0.5 * (full_prob(rf_u, x_target_df) + full_prob(hgb_u, x_target_df))
     m_tree = np.outer(p_tree_d, p_tree_u)
 
     # --- PILLAR 2: Deep MLP Ensemble (Early Stopping, Regularized) ---
-    mlp_d = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=300, alpha=0.1, early_stopping=True, n_iter_no_change=15, random_state=42).fit(X_scaled, y_dec)
-    mlp_u = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=300, alpha=0.1, early_stopping=True, n_iter_no_change=15, random_state=42).fit(X_scaled, y_uni)
+    mlp_d = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=300, alpha=0.1, early_stopping=True, n_iter_no_change=15, random_state=42).fit(X_dir_scaled, y_dec_dir)
+    mlp_u = MLPClassifier(hidden_layer_sizes=(32, 16), max_iter=300, alpha=0.1, early_stopping=True, n_iter_no_change=15, random_state=42).fit(X_dir_scaled, y_uni_dir)
     p_deep_d = full_prob(mlp_d, x_target_scaled)
     p_deep_u = full_prob(mlp_u, x_target_scaled)
     m_deep = np.outer(p_deep_d, p_deep_u)
 
     # Physics-only
-    rf_phys_d = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(sub_features[physics_cols].fillna(0).values, y_dec)
-    rf_phys_u = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(sub_features[physics_cols].fillna(0).values, y_uni)
+    phys_vals = sub_features[physics_cols].fillna(0).values
+    phys_dir = phys_vals[:-horizon] if horizon > 1 and n_samples > 35 else phys_vals
+    rf_phys_d = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(phys_dir, y_dec_dir)
+    rf_phys_u = RandomForestClassifier(n_estimators=60, max_depth=4, random_state=42, n_jobs=1).fit(phys_dir, y_uni_dir)
     x_phys = pd.DataFrame([x_target_dict])[physics_cols].fillna(0).values
     m_phys = np.outer(full_prob(rf_phys_d, x_phys), full_prob(rf_phys_u, x_phys))
 
-    # --- PILLAR 3: 2nd-Order + 1st-Order Markov Transitions ---
+    # --- PILLAR 3: Markov Transitions (Chapman-Kolmogorov P^h for h >= 2) ---
     trans_1st_d = np.ones((10, 10)) * markov_smooth
     trans_1st_u = np.ones((10, 10)) * markov_smooth
     for i in range(len(y_dec) - 1):
@@ -303,28 +328,35 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
     trans_1st_d /= trans_1st_d.sum(axis=1, keepdims=True)
     trans_1st_u /= trans_1st_u.sum(axis=1, keepdims=True)
 
-    p_markov_d = trans_1st_d[int(y_dec[-1])]
-    p_markov_u = trans_1st_u[int(y_uni[-1])]
-
-    if len(y_dec) > 2:
-        prev2_d, prev1_d = int(y_dec[-2]), int(y_dec[-1])
-        prev2_u, prev1_u = int(y_uni[-2]), int(y_uni[-1])
-        c_2nd_d = np.ones(10) * (markov_smooth * 0.5)
-        c_2nd_u = np.ones(10) * (markov_smooth * 0.5)
-        for i in range(len(y_dec) - 2):
-            if y_dec[i] == prev2_d and y_dec[i + 1] == prev1_d:
-                c_2nd_d[y_dec[i + 2]] += 1.5
-            if y_uni[i] == prev2_u and y_uni[i + 1] == prev1_u:
-                c_2nd_u[y_uni[i + 2]] += 1.5
-        c_2nd_d /= c_2nd_d.sum()
-        c_2nd_u /= c_2nd_u.sum()
-        p_markov_d = 0.70 * p_markov_d + 0.30 * c_2nd_d
-        p_markov_u = 0.70 * p_markov_u + 0.30 * c_2nd_u
+    if horizon > 1:
+        # Chapman-Kolmogorov h-step transition: P^(h) = P^h
+        P_d_h = np.linalg.matrix_power(trans_1st_d, horizon)
+        P_u_h = np.linalg.matrix_power(trans_1st_u, horizon)
+        p_markov_d = P_d_h[int(y_dec[-1])]
+        p_markov_u = P_u_h[int(y_uni[-1])]
+    else:
+        p_markov_d = trans_1st_d[int(y_dec[-1])]
+        p_markov_u = trans_1st_u[int(y_uni[-1])]
+        if len(y_dec) > 2:
+            prev2_d, prev1_d = int(y_dec[-2]), int(y_dec[-1])
+            prev2_u, prev1_u = int(y_uni[-2]), int(y_uni[-1])
+            c_2nd_d = np.ones(10) * (markov_smooth * 0.5)
+            c_2nd_u = np.ones(10) * (markov_smooth * 0.5)
+            for i in range(len(y_dec) - 2):
+                if y_dec[i] == prev2_d and y_dec[i + 1] == prev1_d:
+                    c_2nd_d[y_dec[i + 2]] += 1.5
+                if y_uni[i] == prev2_u and y_uni[i + 1] == prev1_u:
+                    c_2nd_u[y_uni[i + 2]] += 1.5
+            c_2nd_d /= c_2nd_d.sum()
+            c_2nd_u /= c_2nd_u.sum()
+            p_markov_d = 0.70 * p_markov_d + 0.30 * c_2nd_d
+            p_markov_u = 0.70 * p_markov_u + 0.30 * c_2nd_u
 
     m_markov = np.outer(p_markov_d, p_markov_u)
 
-    # --- PILLAR 4: Recency-Weighted Dirichlet-Multinomial ---
-    weights_time = decay_gamma ** np.arange(n_samples - 1, -1, -1)
+    # --- PILLAR 4: Recency-Weighted Dirichlet-Multinomial (Decay^h) ---
+    decay_gamma_h = decay_gamma ** horizon
+    weights_time = decay_gamma_h ** np.arange(n_samples - 1, -1, -1)
     c_dec = np.zeros(10)
     c_uni = np.zeros(10)
     c_2d = np.zeros(100)
@@ -341,13 +373,19 @@ def _compute_components_internal(sub, lottery, target_date, hyperparams):
     m_hot = 0.60 * np.outer(p_hot_d, p_hot_u) + 0.40 * p_hot_2d.reshape(10, 10)
     m_hot /= m_hot.sum()
 
-    # --- PILLAR 5: Renewal Cold / Weibull Softmax Hazard ---
+    # --- PILLAR 5: Renewal Cold / Weibull Softmax Hazard (Projected Delay at t+h) ---
     delay_d_arr = np.array([cur_atraso_dec[d] for d in range(10)], dtype=float)
     delay_u_arr = np.array([cur_atraso_uni[u] for u in range(10)], dtype=float)
+    if horizon > 1:
+        decay_factor = 0.9 ** (horizon - 1)
+        delay_d_arr = decay_factor * delay_d_arr + (horizon - 1) * 0.9
+        delay_u_arr = decay_factor * delay_u_arr + (horizon - 1) * 0.9
+
     p_cold_d = np.exp(delay_d_arr / renewal_temp)
     p_cold_d /= p_cold_d.sum()
     p_cold_u = np.exp(delay_u_arr / renewal_temp)
     p_cold_u /= p_cold_u.sum()
+    m_cold = np.outer(p_cold_d, p_cold_u)
     m_cold = np.outer(p_cold_d, p_cold_u)
 
     return {
@@ -422,13 +460,26 @@ class RaffleGPUPredictor:
             taken_numbers = []
         taken_set = set(int(x) for x in taken_numbers if 0 <= int(x) <= 99)
 
-        opt_info = load_optimal_hyperparams()
+        df = pd.read_csv(self.enriched_path)
+        if allow_past and target_date < today_str:
+            sub = df[(df['lottery'] == lottery) & (df['date'] < target_date)].sort_values('date').copy().reset_index(drop=True)
+            if len(sub) < 40:
+                sub = df[df['lottery'] == lottery].sort_values('date').copy().reset_index(drop=True)
+        else:
+            sub = df[df['lottery'] == lottery].sort_values('date').copy().reset_index(drop=True)
+
+        last_row = sub.iloc[-1]
+        last_draw_dt = datetime.date.fromisoformat(str(last_row['date']))
+        target_dt = datetime.date.fromisoformat(target_date)
+        horizon = count_draws_between(last_draw_dt, target_dt)
+
+        opt_info = load_optimal_hyperparams(horizon=horizon)
         optimal_w = opt_info.get('optimal_weights', {
-            'ml_tree': 0.173,
-            'deep_gpu': 0.186,
-            'markov': 0.340,
-            'bayesian_hot': 0.231,
-            'renewal_cold': 0.069
+            'ml_tree': 0.211,
+            'deep_gpu': 0.196,
+            'markov': 0.227,
+            'bayesian_hot': 0.229,
+            'renewal_cold': 0.138
         })
 
         # Apply weights: user override or hyperoptimized defaults
@@ -437,14 +488,6 @@ class RaffleGPUPredictor:
             W.update(strategy_weights)
         w_sum = sum(W.values()) or 1.0
         W = {k: v / w_sum for k, v in W.items()}
-
-        df = pd.read_csv(self.enriched_path)
-        if allow_past and target_date < today_str:
-            sub = df[(df['lottery'] == lottery) & (df['date'] < target_date)].sort_values('date').copy().reset_index(drop=True)
-            if len(sub) < 40:
-                sub = df[df['lottery'] == lottery].sort_values('date').copy().reset_index(drop=True)
-        else:
-            sub = df[df['lottery'] == lottery].sort_values('date').copy().reset_index(drop=True)
 
         comps = self.get_components(sub, lottery, target_date)
         matrix_tree = comps['matrix_tree']
@@ -652,7 +695,10 @@ class RaffleGPUPredictor:
                 'shannon_entropy_decena': round(float(audit['entropy']['decena']), 4),
                 'shannon_entropy_unidad': round(float(audit['entropy']['unidad']), 4)
             },
-            'hyperparams': opt_info
+            'hyperparams': opt_info,
+            'horizon_draws': horizon,
+            'horizon_label': 'Sorteo Inmediato (T+1)' if horizon == 1 else f'Sorteo Anticipado a {horizon * 24}h (T+{horizon} • Chapman-Kolmogorov P^{horizon})',
+            'horizon_weights_used': W
         }
 
     def backfill_historical_predictions(self, days=30, lottery='ciudad'):

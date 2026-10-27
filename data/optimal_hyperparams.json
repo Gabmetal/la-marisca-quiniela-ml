@@ -60,6 +60,20 @@
     "bayesian_hot": 0.229,
     "renewal_cold": 0.138
   },
+  "optimal_weights_h1": {
+    "ml_tree": 0.211,
+    "deep_gpu": 0.196,
+    "markov": 0.227,
+    "bayesian_hot": 0.229,
+    "renewal_cold": 0.138
+  },
+  "optimal_weights_h2": {
+    "ml_tree": 0.045,
+    "deep_gpu": 0.063,
+    "markov": 0.389,
+    "bayesian_hot": 0.503,
+    "renewal_cold": 0.001
+  },
   "hyperparameters": {
     "alpha_prior": 1.8,
     "renewal_temp": 10.5,
@@ -78,6 +92,32 @@
     "hit_unidad_pct": 9.24,
     "lift_hit_5_pct": 0.84,
     "lift_hit_10_pct": 9.24
+  },
+  "backtest_results_h1": {
+    "total_evaluated": 119,
+    "log_loss_mean": 4.7253,
+    "brier_score_mean": 1.8228,
+    "hit_1_pct": 1.68,
+    "hit_3_pct": 2.52,
+    "hit_5_pct": 5.04,
+    "hit_10_pct": 10.92,
+    "hit_decena_pct": 8.4,
+    "hit_unidad_pct": 9.24,
+    "lift_hit_5_pct": 0.84,
+    "lift_hit_10_pct": 9.24
+  },
+  "backtest_results_h2": {
+    "total_evaluated": 89,
+    "log_loss_mean": 4.761,
+    "brier_score_mean": 1.834,
+    "hit_1_pct": 1.12,
+    "hit_3_pct": 2.25,
+    "hit_5_pct": 3.37,
+    "hit_10_pct": 8.99,
+    "hit_decena_pct": 11.24,
+    "hit_unidad_pct": 10.11,
+    "lift_hit_5_pct": -32.6,
+    "lift_hit_10_pct": -10.1
   },
   "baseline_uniform_results": {
     "total_evaluated": 119,

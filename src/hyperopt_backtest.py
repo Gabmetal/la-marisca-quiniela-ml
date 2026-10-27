@@ -496,29 +496,51 @@ def optimize_hyperparameters(csv_path=None, lottery='ciudad'):
     return out_data
 
 
-def load_optimal_hyperparams():
+def load_optimal_hyperparams(horizon=1):
+    raw = {}
     if os.path.exists(HYPERPARAMS_PATH):
         try:
             with open(HYPERPARAMS_PATH) as f:
-                return json.load(f)
+                raw = json.load(f)
         except Exception:
             pass
-    return {
-        'optimal_weights': {
-            'ml_tree': 0.22,
-            'deep_gpu': 0.18,
-            'markov': 0.20,
-            'bayesian_hot': 0.24,
-            'renewal_cold': 0.16
-        },
-        'backtest_results': {
-            'hit_5_pct': 7.5,
-            'hit_10_pct': 14.0,
-            'lift_hit_5_pct': 50.0,
-            'lift_hit_10_pct': 40.0,
-            'log_loss_mean': 4.58
-        }
-    }
+
+    if horizon >= 2:
+        weights = raw.get('optimal_weights_h2', {
+            'ml_tree': 0.045,
+            'deep_gpu': 0.063,
+            'markov': 0.389,
+            'bayesian_hot': 0.503,
+            'renewal_cold': 0.001
+        })
+        backtest = raw.get('backtest_results_h2', {
+            'hit_5_pct': 3.37,
+            'hit_10_pct': 8.99,
+            'log_loss_mean': 4.761,
+            'brier_score_mean': 1.834,
+            'folds_tested': 89
+        })
+    else:
+        weights = raw.get('optimal_weights_h1', raw.get('optimal_weights', {
+            'ml_tree': 0.211,
+            'deep_gpu': 0.196,
+            'markov': 0.227,
+            'bayesian_hot': 0.229,
+            'renewal_cold': 0.138
+        }))
+        backtest = raw.get('backtest_results_h1', raw.get('backtest_results', {
+            'hit_5_pct': 5.04,
+            'hit_10_pct': 10.92,
+            'log_loss_mean': 4.725,
+            'brier_score_mean': 1.823,
+            'folds_tested': 119
+        }))
+
+    out = dict(raw)
+    out['optimal_weights'] = weights
+    out['backtest_results'] = backtest
+    out['active_horizon'] = horizon
+    return out
 
 
 if __name__ == '__main__':

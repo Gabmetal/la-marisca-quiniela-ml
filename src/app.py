@@ -85,17 +85,34 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </h2>
 
         <!-- Lottery & Future Date -->
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-xs font-semibold text-slate-400 block mb-1">Lotería</label>
-            <select id="lottery-select" onchange="runPrediction()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-              <option value="ciudad" selected>2 - LOTBA Ciudad (21:00)</option>
-              <option value="formosa">Quiniela de Formosa</option>
-            </select>
+        <div class="space-y-2">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-semibold text-slate-400 block mb-1">Lotería</label>
+              <select id="lottery-select" onchange="runPrediction()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                <option value="ciudad" selected>2 - LOTBA Ciudad (21:00)</option>
+                <option value="formosa">Quiniela de Formosa</option>
+              </select>
+            </div>
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-xs font-semibold text-slate-400 block">Fecha Futura</label>
+                <span id="horizon-badge" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">T+1</span>
+              </div>
+              <input type="date" id="target-date" onchange="runPrediction()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+            </div>
           </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-400 block mb-1">Fecha Futura (≥ Hoy)</label>
-            <input type="date" id="target-date" onchange="runPrediction()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+          <!-- Horizon Quick Buttons -->
+          <div class="flex gap-1.5 pt-0.5">
+            <button type="button" onclick="setQuickDate(0)" class="flex-1 py-1 px-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-[11px] font-mono text-slate-300 border border-slate-800 transition text-center">
+              Hoy (T+1)
+            </button>
+            <button type="button" onclick="setQuickDate(1)" class="flex-1 py-1 px-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-[11px] font-mono text-slate-300 border border-slate-800 transition text-center">
+              Mañana
+            </button>
+            <button type="button" onclick="setQuickDate(2)" class="flex-1 py-1 px-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 text-[11px] font-mono text-indigo-300 border border-indigo-500/40 font-semibold transition text-center" title="Proyección 48h Chapman-Kolmogorov P²">
+              🔭 Pasado Mañana (T+2)
+            </button>
           </div>
         </div>
 
@@ -119,7 +136,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-300 uppercase tracking-wider">Pesos del Ensamble</span>
             <button onclick="resetOptimalWeights()" class="text-[11px] text-purple-400 hover:text-purple-300 underline font-mono">
-              ↺ Usar Pesos Óptimos Walk-Forward
+              ↺ Auto-calibrar por Horizonte
             </button>
           </div>
 
@@ -128,7 +145,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <span>Árboles (RandomForest + HistGB)</span>
               <span id="v-tree" class="font-mono text-emerald-400">0.20</span>
             </div>
-            <input type="range" id="w-tree" min="0" max="1" step="0.05" value="0.20" oninput="updateSliders(); runPrediction();" class="w-full accent-emerald-500">
+            <input type="range" id="w-tree" min="0" max="1" step="0.05" value="0.20" oninput="onUserSliderChange()" class="w-full accent-emerald-500">
           </div>
 
           <div>
@@ -136,15 +153,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <span>Deep MLP (Red Neuronal)</span>
               <span id="v-deep" class="font-mono text-indigo-400">0.20</span>
             </div>
-            <input type="range" id="w-deep" min="0" max="1" step="0.05" value="0.20" oninput="updateSliders(); runPrediction();" class="w-full accent-indigo-500">
+            <input type="range" id="w-deep" min="0" max="1" step="0.05" value="0.20" oninput="onUserSliderChange()" class="w-full accent-indigo-500">
           </div>
 
           <div>
             <div class="flex justify-between text-xs text-slate-400 mb-1">
-              <span>Cadenas de Markov (Transición 1° Orden)</span>
+              <span>Cadenas de Markov (Transición 1° / 2° Orden)</span>
               <span id="v-markov" class="font-mono text-cyan-400">0.20</span>
             </div>
-            <input type="range" id="w-markov" min="0" max="1" step="0.05" value="0.20" oninput="updateSliders(); runPrediction();" class="w-full accent-cyan-500">
+            <input type="range" id="w-markov" min="0" max="1" step="0.05" value="0.20" oninput="onUserSliderChange()" class="w-full accent-cyan-500">
           </div>
 
           <div>
@@ -152,7 +169,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <span>Inercia Bayesiana (Hot Dirichlet)</span>
               <span id="v-hot" class="font-mono text-amber-400">0.20</span>
             </div>
-            <input type="range" id="w-hot" min="0" max="1" step="0.05" value="0.20" oninput="updateSliders(); runPrediction();" class="w-full accent-amber-500">
+            <input type="range" id="w-hot" min="0" max="1" step="0.05" value="0.20" oninput="onUserSliderChange()" class="w-full accent-amber-500">
           </div>
 
           <div>
@@ -160,7 +177,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <span>Reversión por Sequía (Cold Atrasos)</span>
               <span id="v-cold" class="font-mono text-rose-400">0.20</span>
             </div>
-            <input type="range" id="w-cold" min="0" max="1" step="0.05" value="0.20" oninput="updateSliders(); runPrediction();" class="w-full accent-rose-500">
+            <input type="range" id="w-cold" min="0" max="1" step="0.05" value="0.20" oninput="onUserSliderChange()" class="w-full accent-rose-500">
           </div>
         </div>
 
@@ -258,7 +275,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <!-- Top Recommended Picks Cards -->
         <div class="glass rounded-2xl p-5 space-y-4">
           <div class="flex items-center justify-between">
-            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+            <h2 id="rec-title" class="text-lg font-bold text-white flex items-center gap-2">
               <span>🎯</span> Portafolio Óptimo Recomendado (Modo Ortogonal)
             </h2>
             <span class="text-xs text-emerald-400 font-mono">Dispersión de Dígitos Maximizado</span>
@@ -395,6 +412,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       renewal_cold: 0.20
     };
 
+    let userChangedSliders = false;
+
     function updateSliders() {
       document.getElementById('v-tree').textContent = parseFloat(document.getElementById('w-tree').value).toFixed(2);
       document.getElementById('v-deep').textContent = parseFloat(document.getElementById('w-deep').value).toFixed(2);
@@ -403,13 +422,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('v-cold').textContent = parseFloat(document.getElementById('w-cold').value).toFixed(2);
     }
 
-    function resetOptimalWeights() {
-      document.getElementById('w-tree').value = currentOptimalWeights.ml_tree || 0.2;
-      document.getElementById('w-deep').value = currentOptimalWeights.deep_gpu || 0.2;
-      document.getElementById('w-markov').value = currentOptimalWeights.markov || 0.2;
-      document.getElementById('w-hot').value = currentOptimalWeights.bayesian_hot || 0.2;
-      document.getElementById('w-cold').value = currentOptimalWeights.renewal_cold || 0.2;
+    function onUserSliderChange() {
+      userChangedSliders = true;
       updateSliders();
+      runPrediction();
+    }
+
+    function resetOptimalWeights() {
+      userChangedSliders = false;
+      runPrediction();
+    }
+
+    function setQuickDate(offsetDays) {
+      const base = new Date();
+      base.setDate(base.getDate() + offsetDays);
+      document.getElementById('target-date').value = base.toISOString().split('T')[0];
+      userChangedSliders = false;
       runPrediction();
     }
 
@@ -481,13 +509,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         ticket_count: parseInt(document.getElementById('ticket-count').value),
         orthogonal_coverage: document.getElementById('orthogonal-mode').value === 'true',
         taken_numbers: Array.from(takenNumbers),
-        strategy_weights: {
+        strategy_weights: userChangedSliders ? {
           ml_tree: parseFloat(document.getElementById('w-tree').value),
           deep_gpu: parseFloat(document.getElementById('w-deep').value),
           markov: parseFloat(document.getElementById('w-markov').value),
           bayesian_hot: parseFloat(document.getElementById('w-hot').value),
           renewal_cold: parseFloat(document.getElementById('w-cold').value)
-        }
+        } : null
       };
 
       try {
@@ -517,6 +545,32 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         currentOptimalWeights = data.hyperparams.optimal_weights;
       }
 
+      // Update sliders if not manually overridden by user
+      if (!userChangedSliders && data.horizon_weights_used) {
+        const hw = data.horizon_weights_used;
+        document.getElementById('w-tree').value = hw.ml_tree;
+        document.getElementById('w-deep').value = hw.deep_gpu;
+        document.getElementById('w-markov').value = hw.markov;
+        document.getElementById('w-hot').value = hw.bayesian_hot;
+        document.getElementById('w-cold').value = hw.renewal_cold;
+        updateSliders();
+      }
+
+      // Horizon badge & Title
+      if (data.horizon_label) {
+        const hBadge = document.getElementById('horizon-badge');
+        if (hBadge) {
+          hBadge.textContent = data.horizon_draws > 1 ? `T+${data.horizon_draws} (${data.horizon_draws * 24}h)` : 'T+1 (Hoy)';
+          hBadge.className = data.horizon_draws > 1 
+            ? 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold'
+            : 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold';
+        }
+        const titleBadge = document.getElementById('rec-title');
+        if (titleBadge) {
+          titleBadge.innerHTML = `<span>🎯</span> Portafolio Óptimo — ${data.horizon_label}`;
+        }
+      }
+
       if (data.hyperparams && data.hyperparams.backtest_results) {
         const bt = data.hyperparams.backtest_results;
         document.getElementById('wf-logloss').textContent = bt.log_loss_mean.toFixed(3);
@@ -525,10 +579,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
         document.getElementById('wf-hit10').textContent = `${bt.hit_10_pct}%`;
         document.getElementById('wf-brier').textContent = bt.brier_score_mean.toFixed(3);
-        document.getElementById('wf-folds').textContent = `${data.hyperparams.folds_tested || 77} Folds`;
-        document.getElementById('backtest-badge').textContent = `Backtest Hit@5: ${bt.hit_5_pct}% (+${bt.lift_hit_5_pct}% lift)`;
+        document.getElementById('wf-folds').textContent = `${bt.folds_tested || (data.horizon_draws > 1 ? 89 : 119)} Folds`;
+        document.getElementById('backtest-badge').textContent = `Backtest Hit@5: ${bt.hit_5_pct}% (${data.horizon_draws > 1 ? '48h Difusivo' : '+' + bt.lift_hit_5_pct + '% lift'})`;
         if (document.getElementById('wf-summary')) {
-          document.getElementById('wf-summary').innerHTML = `Hit@5: <strong class="text-emerald-400">${bt.hit_5_pct}%</strong> (+${bt.lift_hit_5_pct}% lift). Hit Decena: <strong class="text-teal-300">${bt.hit_decena_pct}%</strong>. Log-Loss: <strong class="text-purple-300">${bt.log_loss_mean.toFixed(3)}</strong> (vs base 4.76).`;
+          if (data.horizon_draws > 1) {
+            document.getElementById('wf-summary').innerHTML = `Modo Anticipado a 48h (T+${data.horizon_draws}): Hit@5: <strong class="text-indigo-400">${bt.hit_5_pct}%</strong> (${bt.folds_tested || 89} Folds). Matriz Markov <strong class="text-purple-300">P^${data.horizon_draws} (Chapman-Kolmogorov)</strong> + Inercia Bayesiana Dirichlet adaptada a 48h.`;
+          } else {
+            document.getElementById('wf-summary').innerHTML = `Modo Inmediato (T+1): Hit@5: <strong class="text-emerald-400">${bt.hit_5_pct}%</strong> (+${bt.lift_hit_5_pct}% lift). Hit Decena: <strong class="text-teal-300">${bt.hit_decena_pct}%</strong>. Log-Loss: <strong class="text-purple-300">${bt.log_loss_mean.toFixed(3)}</strong> (119 Folds).`;
+          }
         }
       }
 
