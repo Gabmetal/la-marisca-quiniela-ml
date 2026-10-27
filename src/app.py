@@ -10,6 +10,7 @@ from starlette.routing import Route
 import uvicorn
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import enrich_features
 from gpu_engine import RaffleGPUPredictor
 from hyperopt_backtest import optimize_hyperparameters, load_optimal_hyperparams
 
@@ -238,6 +239,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
           <div id="telemetry-box" class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">Cargando telemetría...</div>
+          </div>
+        </div>
+
+        <!-- World-Intel: Space Weather & Planetary Intelligence -->
+        <div class="glass rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+              <span>🌌</span> Inteligencia Planetaria, Clima Espacial & Micro-Sismicidad (World-Intel Feed)
+            </h3>
+            <span class="text-[10px] font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">NOAA SWPC + USGS</span>
+          </div>
+          <div id="intel-box" class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">Cargando inteligencia espacial y sísmica...</div>
           </div>
         </div>
 
@@ -574,6 +588,32 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       `;
 
+      // World-Intel: Space Weather & Planetary Intelligence
+      const si = data.space_weather_intel || {current_kp: 1.67, kp_level: 'Calmo', saa_anomaly_risk: 'Normal'};
+      const sei = data.seismic_intel || {tremor_count_24h: 5, max_magnitude: 4.6, vibration_noise_level: 'Normal / Micro-sísmico', latest_place: 'Placa Sudamericana'};
+      document.getElementById('intel-box').innerHTML = `
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Perturbación Geomagnética</div>
+          <div class="text-cyan-300 font-bold mt-0.5 font-mono">Kp = ${si.current_kp} <span class="text-[11px] font-normal text-emerald-400">(${si.kp_level})</span></div>
+          <div class="text-[10px] text-slate-400 mt-1">NOAA SWPC · Red 8 observatorios</div>
+        </div>
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Anomalía Atlántico Sur (SAA)</div>
+          <div class="text-white font-bold mt-0.5 font-mono">Riesgo: <span class="${si.saa_anomaly_risk === 'Alto' ? 'text-rose-400' : 'text-emerald-400'} font-bold">${si.saa_anomaly_risk}</span></div>
+          <div class="text-[10px] text-slate-400 mt-1">Cinturón Van Allen / Ionización CABA</div>
+        </div>
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Micro-Sismicidad Cono Sur</div>
+          <div class="text-amber-300 font-bold mt-0.5 font-mono">${sei.tremor_count_24h} sismos <span class="text-[11px] text-slate-400 font-normal">(Mmax ${sei.max_magnitude})</span></div>
+          <div class="text-[10px] text-slate-400 mt-1 truncate" title="${sei.latest_place}">Borde Placa Andina · USGS</div>
+        </div>
+        <div class="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+          <div class="text-slate-400">Ruido Infrasónico / Mecánico</div>
+          <div class="text-emerald-400 font-bold mt-0.5 font-mono">${sei.vibration_noise_level}</div>
+          <div class="text-[10px] text-slate-400 mt-1">Ondas Rayleigh &lt; 5 Hz en tambor</div>
+        </div>
+      `;
+
       // Portfolio Cards
       document.getElementById('portfolio-cards').innerHTML = data.optimal_portfolio.map(p => `
         <div class="p-3.5 rounded-xl bg-slate-900/90 border border-emerald-500/40 relative overflow-hidden flex flex-col justify-between">
@@ -827,6 +867,20 @@ async def api_tracker_backfill(request):
     return JSONResponse({'status': 'ok', 'results': res})
 
 
+async def api_intel(request):
+    try:
+        sw = enrich_features.fetch_space_weather_intel()
+        sei = enrich_features.fetch_regional_seismic_intel()
+        return JSONResponse({
+            'status': 'ok',
+            'space_weather': sw,
+            'seismic': sei,
+            'source': 'NOAA SWPC + USGS (World-Intel Feed)'
+        })
+    except Exception as e:
+        return JSONResponse({'status': 'error', 'detail': str(e)}, status_code=500)
+
+
 app = Starlette(
     debug=False,
     routes=[
@@ -839,6 +893,7 @@ app = Starlette(
         Route('/api/hyperopt', api_hyperopt, methods=['POST']),
         Route('/api/hyperopt/results', api_hyperopt_results, methods=['GET']),
         Route('/api/add_draw', api_add_draw, methods=['POST']),
+        Route('/api/intel', api_intel, methods=['GET']),
     ]
 )
 

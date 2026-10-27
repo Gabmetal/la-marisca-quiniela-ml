@@ -627,6 +627,8 @@ class RaffleGPUPredictor:
             },
             'weather_forecast': weather_fc,
             'lunar_ephemeris': lunar_fc,
+            'space_weather_intel': enrich_features.fetch_space_weather_intel(),
+            'seismic_intel': enrich_features.fetch_regional_seismic_intel(),
             'portfolio_metrics': {
                 'ticket_count': len(selected_portfolio),
                 'available_pool_size': len(available_nums),

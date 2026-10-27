@@ -52,6 +52,10 @@ El sistema modela la interacción física entre las bolillas de celuloide ($2.7\
 4. **Resonancia de Caos Determinista / Mecánica Cuántica (KAM):**
    - Ángulo de fase ergódica basado en el número áureo $\Phi = \frac{1+\sqrt{5}}{2}$ (teoría Kolmogorov-Arnold-Moser para billares caóticos con perturbaciones periódicas).
    - Entropía de Shannon rodante del tambor ($H_{10}$) sobre los últimos 10 sorteos para medir dispersión de microestados.
+5. **Inteligencia Planetaria & Clima Espacial (World-Intel / NOAA SWPC / USGS):**
+   - Perturbación geomagnética planetaria ($Kp$-index, 8 observatorios magnéticos globales).
+   - Monitoreo de la Anomalía del Atlántico Sur (SAA: región donde el cinturón interior de radiación Van Allen desciende sobre Sudamérica, afectando la ionización atmosférica y la disipación electrostática de las bolillas de celuloide).
+   - Detección de micro-vibraciones mecánicas de baja frecuencia ($< 5\text{Hz}$) en el borde de placa andina (USGS) transmitidas al basamento del bolillero.
 
 ### ♟️ C. Cobertura Ortogonal de Torres (Latin-Square / Rook Problem)
 Al seleccionar un portafolio de $K$ boletos (`00`–`99`), el optimizador submodular restringe la selección para **maximizar la dispersión de decenas y unidades independientes**:
